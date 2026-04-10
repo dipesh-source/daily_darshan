@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static editor_extras %}
 
-{% block title %}Daily Darshan Editor – Home{% endblock %}
+{% block title %}Daily Darshan Editor{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
@@ -10,85 +10,76 @@
 {% block content %}
 <div class="dashboard">
 
-  <!-- ── Hero ──────────────────────────────────────────────────────────── -->
+  <!-- ── Hero ──────────────────────────────────────────────────────── -->
   <div class="dashboard-hero">
     <div class="hero-text">
       <h1>Jay Swaminarayan 🙏</h1>
-      <p>Select a Darshan type and frame to open the editor.</p>
+      <p>Choose a Darshan type to open all its frames together in one editor.</p>
     </div>
     <div class="hero-date">
       <span class="date-label">Today</span>
-      <span class="date-value" id="todayDate">{{ today|date:"D, d M Y" }}</span>
+      <span class="date-value">{{ today|date:"D, d M Y" }}</span>
     </div>
   </div>
 
-  <!-- ── Darshan tabs ──────────────────────────────────────────────────── -->
-  <div class="tab-bar">
+  <!-- ── Date picker ────────────────────────────────────────────────── -->
+  <div class="date-row">
+    <label class="date-pick-label">Darshan Date:</label>
+    <input type="date" id="darshanDatePicker" value="{{ today|date:'Y-m-d' }}" class="date-pick-input">
+  </div>
+
+  <!-- ── Three darshan cards ────────────────────────────────────────── -->
+  <div class="darshan-cards">
+
     {% for key, group in grouped.items %}
-    <button class="tab-btn {% if forloop.first %}active{% endif %}" data-tab="{{ key }}">
-      {{ group.label }}
-    </button>
-    {% endfor %}
-  </div>
+    <div class="darshan-card" data-darshan="{{ key }}">
+      <div class="darshan-card-header darshan-{{ key }}">
+        <span class="darshan-icon">
+          {% if key == "mangala" %}🌅{% elif key == "shanagar" %}🌸{% else %}🌙{% endif %}
+        </span>
+        <h2 class="darshan-card-title">{{ group.label }}</h2>
+        <span class="darshan-frame-count">{{ group.frames|length }} frames</span>
+      </div>
 
-  <!-- ── Frame grids ───────────────────────────────────────────────────── -->
-  {% for key, group in grouped.items %}
-  <div class="frame-grid" id="tab-{{ key }}" {% if not forloop.first %}style="display:none"{% endif %}>
-    {% for frame in group.frames %}
-    <div class="frame-card">
-      <div class="frame-card-preview">
-        <!-- SVG slot diagram -->
-        <svg viewBox="0 0 100 {% widthratio frame.canvas_height frame.canvas_width 100 %}"
-             xmlns="http://www.w3.org/2000/svg"
-             class="slot-diagram">
-          <rect width="100" height="{% widthratio frame.canvas_height frame.canvas_width 100 %}" fill="#f5e6c8" rx="4"/>
-          {% for slot in frame.slots %}
-            {% with sx=slot.x sy=slot.y sw=slot.w sh=slot.h fw=frame.canvas_width fh=frame.canvas_height %}
-            <rect
-              x="{% widthratio sx fw 100 %}"
-              y="{% widthratio sy fh 100 %}"
-              width="{% widthratio sw fw 100 %}"
-              height="{% widthratio sh fh 100 %}"
-              rx="3"
-              fill="#c9922a"
-              opacity="0.7"/>
-            {% endwith %}
+      <div class="darshan-card-body">
+        <div class="frame-pill-list">
+          {% for frame in group.frames %}
+          <div class="frame-pill">
+            <span class="pill-name">{{ frame.short_name }}</span>
+            <span class="pill-slots">{{ frame.slot_count }}▣</span>
+          </div>
           {% endfor %}
-        </svg>
-      </div>
-      <div class="frame-card-info">
-        <h3 class="frame-name">{{ frame.display_name }}</h3>
-        <div class="frame-meta">
-          <span class="badge">{{ frame.slot_count }} slot{{ frame.slot_count|pluralize }}</span>
-          <span class="dims">{{ frame.canvas_width }}×{{ frame.canvas_height }}</span>
         </div>
+        <p class="darshan-card-hint">All frames open together in one editor, side by side.</p>
       </div>
-      <a href="{% url 'editor_new' frame.id %}?date={{ today|date:'Y-m-d' }}"
-         class="btn-open-editor">Open Editor</a>
-    </div>
-    {% empty %}
-    <p class="empty-notice">No frames configured for this Darshan type.</p>
-    {% endfor %}
-  </div>
-  {% endfor %}
 
-  <!-- ── Recent work ───────────────────────────────────────────────────── -->
-  {% if recent %}
+      <a class="darshan-open-btn darshan-btn-{{ key }}" id="openBtn-{{ key }}"
+         href="{% url 'darshan_editor' key %}?date={{ today|date:'Y-m-d' }}">
+        Open {{ group.label }} Editor →
+      </a>
+    </div>
+    {% endfor %}
+
+  </div>
+
+  <!-- ── Recent sessions ────────────────────────────────────────────── -->
+  {% if recent_sessions %}
   <section class="recent-section">
-    <h2 class="section-title">Recent Work</h2>
+    <h2 class="section-title">Recent Sessions</h2>
     <div class="recent-grid">
-      {% for comp in recent %}
-      <a href="{% url 'editor_load' comp.id %}" class="recent-card">
+      {% for sess in recent_sessions %}
+      <a href="{% url 'session_load' sess.id %}" class="recent-card">
         <div class="recent-thumb">
-          {% if comp.export_path %}
-          <img src="{{ comp.export_path }}" alt="{{ comp.title }}" loading="lazy">
-          {% else %}
-          <span class="no-thumb">🪔</span>
-          {% endif %}
+          <span class="recent-darshan-icon">
+            {% if sess.darshan_type == "mangala" %}🌅
+            {% elif sess.darshan_type == "shanagar" %}🌸
+            {% else %}🌙{% endif %}
+          </span>
         </div>
         <div class="recent-info">
-          <span class="recent-title">{{ comp.title }}</span>
-          <span class="recent-date">{{ comp.darshan_date|date:"d M Y" }}</span>
+          <span class="recent-title">{{ darshan_labels|get_item:sess.darshan_type }}</span>
+          <span class="recent-date">{{ sess.darshan_date|date:"d M Y" }}</span>
+          <span class="recent-updated">{{ sess.updated_at|date:"H:i" }}</span>
         </div>
       </a>
       {% endfor %}
@@ -101,13 +92,15 @@
 
 {% block extra_js %}
 <script>
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.frame-grid').forEach(g => g.style.display = 'none');
-      btn.classList.add('active');
-      document.getElementById('tab-' + btn.dataset.tab).style.display = 'grid';
-    });
+  // Wire up date picker to all open buttons
+  const picker = document.getElementById('darshanDatePicker');
+  picker.addEventListener('change', () => {
+    const d = picker.value;
+    {% for key, group in grouped.items %}
+    document.getElementById('openBtn-{{ key }}').href = '/darshan/{{ key }}/?date=' + d;
+    {% endfor %}
   });
+  // Init on load
+  picker.dispatchEvent(new Event('change'));
 </script>
 {% endblock %}
