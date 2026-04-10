@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Daily Darshan Editor – Home{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+
+  <!-- ── Hero ──────────────────────────────────────────────────────────── -->
+  <div class="dashboard-hero">
+    <div class="hero-text">
+      <h1>Jay Swaminarayan 🙏</h1>
+      <p>Select a Darshan type and frame to open the editor.</p>
+    </div>
+    <div class="hero-date">
+      <span class="date-label">Today</span>
+      <span class="date-value" id="todayDate">{{ today|date:"D, d M Y" }}</span>
+    </div>
+  </div>
+
+  <!-- ── Darshan tabs ──────────────────────────────────────────────────── -->
+  <div class="tab-bar">
+    {% for key, group in grouped.items %}
+    <button class="tab-btn {% if forloop.first %}active{% endif %}" data-tab="{{ key }}">
+      {{ group.label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- ── Frame grids ───────────────────────────────────────────────────── -->
+  {% for key, group in grouped.items %}
+  <div class="frame-grid" id="tab-{{ key }}" {% if not forloop.first %}style="display:none"{% endif %}>
+    {% for frame in group.frames %}
+    <div class="frame-card">
+      <div class="frame-card-preview">
+        <!-- SVG slot diagram -->
+        <svg viewBox="0 0 100 {% widthratio frame.canvas_height frame.canvas_width 100 %}"
+             xmlns="http://www.w3.org/2000/svg"
+             class="slot-diagram">
+          <rect width="100" height="{% widthratio frame.canvas_height frame.canvas_width 100 %}" fill="#f5e6c8" rx="4"/>
+          {% for slot in frame.slots %}
+            {% with sx=slot.x sy=slot.y sw=slot.w sh=slot.h fw=frame.canvas_width fh=frame.canvas_height %}
+            <rect
+              x="{% widthratio sx fw 100 %}"
+              y="{% widthratio sy fh 100 %}"
+              width="{% widthratio sw fw 100 %}"
+              height="{% widthratio sh fh 100 %}"
+              rx="3"
+              fill="#c9922a"
+              opacity="0.7"/>
+            {% endwith %}
+          {% endfor %}
+        </svg>
+      </div>
+      <div class="frame-card-info">
+        <h3 class="frame-name">{{ frame.display_name }}</h3>
+        <div class="frame-meta">
+          <span class="badge">{{ frame.slot_count }} slot{{ frame.slot_count|pluralize }}</span>
+          <span class="dims">{{ frame.canvas_width }}×{{ frame.canvas_height }}</span>
+        </div>
+      </div>
+      <a href="{% url 'editor_new' frame.id %}?date={{ today|date:'Y-m-d' }}"
+         class="btn-open-editor">Open Editor</a>
+    </div>
+    {% empty %}
+    <p class="empty-notice">No frames configured for this Darshan type.</p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <!-- ── Recent work ───────────────────────────────────────────────────── -->
+  {% if recent %}
+  <section class="recent-section">
+    <h2 class="section-title">Recent Work</h2>
+    <div class="recent-grid">
+      {% for comp in recent %}
+      <a href="{% url 'editor_load' comp.id %}" class="recent-card">
+        <div class="recent-thumb">
+          {% if comp.export_path %}
+          <img src="{{ comp.export_path }}" alt="{{ comp.title }}" loading="lazy">
+          {% else %}
+          <span class="no-thumb">🪔</span>
+          {% endif %}
+        </div>
+        <div class="recent-info">
+          <span class="recent-title">{{ comp.title }}</span>
+          <span class="recent-date">{{ comp.darshan_date|date:"d M Y" }}</span>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.frame-grid').forEach(g => g.style.display = 'none');
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).style.display = 'grid';
+    });
+  });
+</script>
+{% endblock %}

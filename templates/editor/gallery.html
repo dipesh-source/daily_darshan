@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Gallery – Daily Darshan Editor{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+  <div class="dashboard-hero">
+    <div class="hero-text">
+      <h1>Gallery</h1>
+      <p>All saved Darshan compositions.</p>
+    </div>
+  </div>
+
+  {% if compositions %}
+  <div class="recent-grid gallery-grid">
+    {% for comp in compositions %}
+    <div class="recent-card gallery-card">
+      <div class="recent-thumb">
+        {% if comp.export_path %}
+        <img src="/media/exports/{{ comp.id }}.png" alt="{{ comp.title }}" loading="lazy">
+        {% else %}
+        <span class="no-thumb">🪔</span>
+        {% endif %}
+      </div>
+      <div class="recent-info">
+        <span class="recent-title">{{ comp.title }}</span>
+        <span class="recent-date">{{ comp.darshan_date|date:"d M Y" }}</span>
+        <span class="recent-frame">{{ comp.frame_config.display_name }}</span>
+      </div>
+      <div class="gallery-actions">
+        <a href="{% url 'editor_load' comp.id %}" class="btn-sm">Edit</a>
+        {% if comp.export_path %}
+        <a href="/media/exports/{{ comp.id }}.png" class="btn-sm btn-secondary" download>Download</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <span class="empty-icon">🪔</span>
+    <p>No compositions yet. <a href="{% url 'dashboard' %}">Create one!</a></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ composition.title }} – Editor{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/editor.css' %}">
+{% endblock %}
+
+{% block content %}
+<!-- Seed data for JS -->
+<script>
+  window.FRAME_CONFIG    = {{ frame_config_json|safe }};
+  window.COMPOSITION_ID  = "{{ composition.id }}";
+  window.DARSHAN_DATE    = "{{ composition.darshan_date|date:'d F Y' }}";
+  window.DARSHAN_TITLE   = "{{ composition.frame_config.display_name }}";
+  window.EXISTING_JSON   = {{ canvas_json|safe }};
+</script>
+
+<div class="editor-shell">
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       TOP BAR
+  ═══════════════════════════════════════════════════════════════════ -->
+  <div class="editor-topbar">
+    <div class="topbar-left">
+      <a href="{% url 'dashboard' %}" class="topbar-back" title="Back to Home">&#8592;</a>
+      <div class="topbar-info">
+        <span class="topbar-title" id="compositionTitle">{{ composition.title }}</span>
+        <span class="topbar-sub">{{ composition.darshan_date|date:"d M Y" }} &nbsp;·&nbsp; {{ frame_config.canvas_width }}×{{ frame_config.canvas_height }}</span>
+      </div>
+    </div>
+    <div class="topbar-center">
+      <button class="topbar-btn" id="btnUndo" title="Undo (Ctrl+Z)">↩</button>
+      <button class="topbar-btn" id="btnRedo" title="Redo (Ctrl+Y)">↪</button>
+      <div class="topbar-divider"></div>
+      <button class="topbar-btn" id="btnZoomOut" title="Zoom Out (-)">−</button>
+      <span class="zoom-display" id="zoomDisplay">100%</span>
+      <button class="topbar-btn" id="btnZoomIn" title="Zoom In (+)">+</button>
+      <button class="topbar-btn" id="btnFitScreen" title="Fit to Screen (F)">⤢</button>
+      <div class="topbar-divider"></div>
+      <button class="topbar-btn danger" id="btnDeleteSelected" title="Delete Selected (Del)">🗑</button>
+    </div>
+    <div class="topbar-right">
+      <span class="save-status" id="saveStatus"></span>
+      <button class="topbar-btn-primary" id="btnSave" title="Save (Ctrl+S)">Save</button>
+      <button class="topbar-btn-primary green" id="btnExport" title="Export PNG">Export PNG</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       MAIN AREA  (left panel · canvas · right panel)
+  ═══════════════════════════════════════════════════════════════════ -->
+  <div class="editor-main">
+
+    <!-- ── LEFT PANEL ───────────────────────────────────────────────── -->
+    <aside class="left-panel" id="leftPanel">
+
+      <!-- Tool buttons -->
+      <div class="tool-strip">
+        <button class="tool-btn active" data-tool="select" title="Select (V)">
+          <svg viewBox="0 0 24 24"><path d="M4 4l7 18 3-7 7-3z" fill="currentColor"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="text" title="Add Text (T)">
+          <svg viewBox="0 0 24 24"><text x="4" y="18" font-size="16" fill="currentColor" font-family="serif">T</text></svg>
+        </button>
+        <button class="tool-btn" data-tool="hand" title="Pan (H)">
+          <svg viewBox="0 0 24 24"><path d="M9 11V6a2 2 0 014 0v4m0 0v-1a2 2 0 014 0v5a7 7 0 01-14 0V9a2 2 0 014 0v2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <!-- Slots section -->
+      <details class="panel-section" open>
+        <summary class="panel-section-title">Photo Slots</summary>
+        <div class="panel-body" id="slotsPanel">
+          {% for slot in frame_config.slots %}
+          <div class="slot-row" data-slot="{{ slot.index }}">
+            <div class="slot-thumb" id="slotThumb{{ slot.index }}">
+              <span class="slot-num">{{ forloop.counter }}</span>
+            </div>
+            <div class="slot-actions">
+              <button class="slot-upload-btn" data-slot="{{ slot.index }}" title="Upload photo">Upload</button>
+              <button class="slot-clear-btn" data-slot="{{ slot.index }}" title="Remove photo" style="display:none">✕</button>
+            </div>
+          </div>
+          {% endfor %}
+
+          <!-- Frame overlay upload -->
+          <div class="overlay-upload">
+            <label class="overlay-label">Frame Overlay PNG</label>
+            <button class="slot-upload-btn" id="btnUploadOverlay">Upload Overlay</button>
+            <input type="file" id="overlayFileInput" accept="image/png,image/webp" style="display:none">
+          </div>
+        </div>
+      </details>
+
+      <!-- Color Adjustments -->
+      <details class="panel-section" id="colorSection">
+        <summary class="panel-section-title">Color Adjustments</summary>
+        <div class="panel-body">
+          <div class="filter-hint" id="filterHint">Select a photo slot to adjust</div>
+          <div id="filterControls" style="display:none">
+
+            <div class="filter-row">
+              <button class="auto-color-btn" id="btnAutoColor">✦ Auto Correct</button>
+              <button class="reset-btn" id="btnResetColor">Reset</button>
+            </div>
+
+            <!-- Basic -->
+            <div class="filter-group-title">Basic</div>
+            {% for fid, label, min, max, step, default in filter_sliders %}
+            {% empty %}
+            {% endfor %}
+            <div class="filter-row">
+              <label>Brightness</label>
+              <input type="range" id="fBrightness" min="-100" max="100" step="1" value="0">
+              <span class="fval" id="fBrightness_val">0</span>
+            </div>
+            <div class="filter-row">
+              <label>Contrast</label>
+              <input type="range" id="fContrast" min="-100" max="100" step="1" value="0">
+              <span class="fval" id="fContrast_val">0</span>
+            </div>
+            <div class="filter-row">
+              <label>Saturation</label>
+              <input type="range" id="fSaturation" min="-100" max="100" step="1" value="0">
+              <span class="fval" id="fSaturation_val">0</span>
+            </div>
+            <div class="filter-row">
+              <label>Hue</label>
+              <input type="range" id="fHue" min="-180" max="180" step="1" value="0">
+              <span class="fval" id="fHue_val">0°</span>
+            </div>
+            <div class="filter-row">
+              <label>Blur</label>
+              <input type="range" id="fBlur" min="0" max="50" step="1" value="0">
+              <span class="fval" id="fBlur_val">0</span>
+            </div>
+            <div class="filter-row">
+              <label>Noise</label>
+              <input type="range" id="fNoise" min="0" max="600" step="10" value="0">
+              <span class="fval" id="fNoise_val">0</span>
+            </div>
+
+            <!-- Gamma -->
+            <div class="filter-group-title">Gamma (RGB)</div>
+            <div class="filter-row gamma-row">
+              <label>R</label>
+              <input type="range" id="fGammaR" min="10" max="220" step="1" value="100">
+              <span class="fval" id="fGammaR_val">1.00</span>
+            </div>
+            <div class="filter-row gamma-row">
+              <label>G</label>
+              <input type="range" id="fGammaG" min="10" max="220" step="1" value="100">
+              <span class="fval" id="fGammaG_val">1.00</span>
+            </div>
+            <div class="filter-row gamma-row">
+              <label>B</label>
+              <input type="range" id="fGammaB" min="10" max="220" step="1" value="100">
+              <span class="fval" id="fGammaB_val">1.00</span>
+            </div>
+
+            <!-- Presets -->
+            <div class="filter-group-title">Effects</div>
+            <div class="toggles-row">
+              <label class="toggle-chip"><input type="checkbox" id="fGrayscale"> B&amp;W</label>
+              <label class="toggle-chip"><input type="checkbox" id="fSepia"> Sepia</label>
+              <label class="toggle-chip"><input type="checkbox" id="fInvert"> Invert</label>
+              <label class="toggle-chip"><input type="checkbox" id="fVintage"> Vintage</label>
+              <label class="toggle-chip"><input type="checkbox" id="fSharpen"> Sharpen</label>
+              <label class="toggle-chip"><input type="checkbox" id="fPolaroid"> Polaroid</label>
+              <label class="toggle-chip"><input type="checkbox" id="fKodachrome"> Kodachrome</label>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Blend & Opacity -->
+      <details class="panel-section" id="blendSection">
+        <summary class="panel-section-title">Blend &amp; Opacity</summary>
+        <div class="panel-body">
+          <div class="filter-hint" id="blendHint">Select a photo slot to adjust</div>
+          <div id="blendControls" style="display:none">
+            <div class="filter-row">
+              <label>Opacity</label>
+              <input type="range" id="fOpacity" min="0" max="100" step="1" value="100">
+              <span class="fval" id="fOpacity_val">100%</span>
+            </div>
+            <div class="filter-row blend-row">
+              <label>Blend Mode</label>
+              <select id="fBlendMode">
+                <option value="source-over">Normal</option>
+                <option value="multiply">Multiply</option>
+                <option value="screen">Screen</option>
+                <option value="overlay">Overlay</option>
+                <option value="darken">Darken</option>
+                <option value="lighten">Lighten</option>
+                <option value="color-dodge">Color Dodge</option>
+                <option value="color-burn">Color Burn</option>
+                <option value="hard-light">Hard Light</option>
+                <option value="soft-light">Soft Light</option>
+                <option value="difference">Difference</option>
+                <option value="exclusion">Exclusion</option>
+                <option value="hue">Hue</option>
+                <option value="saturation">Saturation</option>
+                <option value="color">Color</option>
+                <option value="luminosity">Luminosity</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Transform -->
+      <details class="panel-section" id="transformSection">
+        <summary class="panel-section-title">Transform</summary>
+        <div class="panel-body">
+          <div class="filter-hint" id="transformHint">Select an object to transform</div>
+          <div id="transformControls" style="display:none">
+            <div class="transform-grid">
+              <div class="tf-field"><label>X</label><input type="number" id="tfX" step="1"></div>
+              <div class="tf-field"><label>Y</label><input type="number" id="tfY" step="1"></div>
+              <div class="tf-field"><label>W</label><input type="number" id="tfW" step="1" min="1"></div>
+              <div class="tf-field"><label>H</label><input type="number" id="tfH" step="1" min="1"></div>
+              <div class="tf-field"><label>Rotate°</label><input type="number" id="tfRot" step="1" min="-360" max="360"></div>
+              <div class="tf-field tf-flip">
+                <button class="flip-btn" id="btnFlipH" title="Flip Horizontal">↔</button>
+                <button class="flip-btn" id="btnFlipV" title="Flip Vertical">↕</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Text -->
+      <details class="panel-section" id="textSection">
+        <summary class="panel-section-title">Add Text</summary>
+        <div class="panel-body">
+          <div class="text-presets">
+            <button class="preset-btn" id="btnAddDate">+ Date</button>
+            <button class="preset-btn" id="btnAddTitle">+ Title</button>
+          </div>
+          <div class="filter-row">
+            <label>Font</label>
+            <select id="txtFont">
+              <option value="Arial">Arial</option>
+              <option value="Georgia">Georgia</option>
+              <option value="Times New Roman">Times New Roman</option>
+              <option value="Trebuchet MS">Trebuchet MS</option>
+              <option value="Verdana">Verdana</option>
+              <option value="Courier New">Courier New</option>
+              <option value="Impact">Impact</option>
+              <option value="Palatino Linotype">Palatino</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Size</label>
+            <input type="number" id="txtSize" value="60" min="8" max="400" step="2">
+          </div>
+          <div class="filter-row">
+            <label>Color</label>
+            <input type="color" id="txtColor" value="#FFFFFF" class="color-pick">
+          </div>
+          <div class="filter-row">
+            <label>Stroke Color</label>
+            <input type="color" id="txtStrokeColor" value="#000000" class="color-pick">
+          </div>
+          <div class="filter-row">
+            <label>Stroke Width</label>
+            <input type="number" id="txtStrokeW" value="2" min="0" max="20" step="1">
+          </div>
+          <div class="filter-row">
+            <label>Align</label>
+            <select id="txtAlign">
+              <option value="left">Left</option>
+              <option value="center" selected>Center</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+          <div class="toggles-row">
+            <label class="toggle-chip"><input type="checkbox" id="txtBold" checked> Bold</label>
+            <label class="toggle-chip"><input type="checkbox" id="txtItalic"> Italic</label>
+            <label class="toggle-chip"><input type="checkbox" id="txtUnderline"> Underline</label>
+            <label class="toggle-chip"><input type="checkbox" id="txtShadow" checked> Shadow</label>
+          </div>
+          <button class="btn-add-text" id="btnAddText">+ Add Text</button>
+
+          <!-- Selected text live edit -->
+          <div id="selectedTextEdit" style="display:none">
+            <div class="filter-group-title">Edit Selected Text</div>
+            <div class="filter-row">
+              <label>Content</label>
+              <textarea id="txtEditContent" rows="2"></textarea>
+            </div>
+          </div>
+        </div>
+      </details>
+
+    </aside><!-- /left-panel -->
+
+    <!-- ── CANVAS AREA ───────────────────────────────────────────────── -->
+    <div class="canvas-area" id="canvasArea">
+      <div class="canvas-wrapper" id="canvasWrapper">
+        <canvas id="mainCanvas"></canvas>
+      </div>
+    </div>
+
+    <!-- ── RIGHT PANEL ──────────────────────────────────────────────── -->
+    <aside class="right-panel" id="rightPanel">
+
+      <!-- Layers -->
+      <details class="panel-section" open>
+        <summary class="panel-section-title">Layers</summary>
+        <div class="panel-body">
+          <div class="layers-list" id="layersList">
+            <p class="filter-hint">Canvas objects appear here</p>
+          </div>
+          <button class="btn-layers-refresh" id="btnRefreshLayers">↻ Refresh</button>
+        </div>
+      </details>
+
+      <!-- Frame info -->
+      <details class="panel-section" open>
+        <summary class="panel-section-title">Frame Info</summary>
+        <div class="panel-body frame-info-body">
+          <div class="info-row"><span>Darshan</span><strong>{{ frame_config.darshan_label }}</strong></div>
+          <div class="info-row"><span>Frame</span><strong>{{ frame_config.display_name }}</strong></div>
+          <div class="info-row"><span>Size</span><strong>{{ frame_config.canvas_width }}×{{ frame_config.canvas_height }}</strong></div>
+          <div class="info-row"><span>Slots</span><strong>{{ frame_config.slot_count }}</strong></div>
+          <div class="info-row"><span>Date</span><strong>{{ composition.darshan_date|date:"d M Y" }}</strong></div>
+        </div>
+      </details>
+
+      <!-- Slot info (position/scale of selected image) -->
+      <details class="panel-section" id="slotInfoSection" style="display:none">
+        <summary class="panel-section-title">Slot Image</summary>
+        <div class="panel-body">
+          <div class="info-row"><span>Slot</span><strong id="siSlot">–</strong></div>
+          <div class="info-row"><span>Pos</span><strong id="siPos">–</strong></div>
+          <div class="info-row"><span>Scale</span><strong id="siScale">–</strong></div>
+          <div class="info-row"><span>Photo</span><strong id="siFile">–</strong></div>
+          <div class="filter-row">
+            <button class="slot-upload-btn" id="siChangeBtn">Change Photo</button>
+          </div>
+        </div>
+      </details>
+
+    </aside><!-- /right-panel -->
+
+  </div><!-- /editor-main -->
+
+  <!-- Hidden file inputs -->
+  {% for slot in frame_config.slots %}
+  <input type="file" id="fileInput{{ slot.index }}" accept="image/*" data-slot="{{ slot.index }}" style="display:none">
+  {% endfor %}
+
+  <!-- Notification container -->
+  <div id="notifications" class="notifications"></div>
+
+  <!-- Export progress overlay -->
+  <div class="export-overlay" id="exportOverlay" style="display:none">
+    <div class="export-card">
+      <div class="export-spinner"></div>
+      <p>Rendering high-resolution export…</p>
+    </div>
+  </div>
+
+</div><!-- /editor-shell -->
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/fabric.min.js' %}"></script>
+<script src="{% static 'js/editor_app.js' %}"></script>
+{% endblock %}
