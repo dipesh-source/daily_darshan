@@ -49,7 +49,7 @@ Thumbs.db
 *.wmv
 *.env
 launch.json
-*.yml
+# *.yml
 Dockerfile
 *.dockerignore
 migrations/
