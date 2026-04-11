@@ -10,14 +10,19 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+import os
 import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# PyInstaller support — when running as a bundled exe, BASE_DIR points to _MEIPASS
-if getattr(sys, 'frozen', False):
+# PyInstaller support — when running as a bundled exe, BASE_DIR points to _MEIPASS.
+# launcher.py sets DARSHAN_BASE_DIR to sys._MEIPASS so static/templates are always
+# resolved against the bundle directory even if __file__ gives an unexpected path.
+if os.environ.get("DARSHAN_BASE_DIR"):
+    BASE_DIR = Path(os.environ["DARSHAN_BASE_DIR"])
+elif getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 
 
@@ -79,10 +84,11 @@ WSGI_APPLICATION = "daily_darshan.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
+_db_path = os.environ.get("DARSHAN_DB_PATH") or (BASE_DIR / "db.sqlite3")
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": Path(_db_path),
     }
 }
 
@@ -126,7 +132,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(os.environ.get("DARSHAN_MEDIA_ROOT") or (BASE_DIR / "media"))
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
