@@ -20,9 +20,9 @@
 const ARTBOARD_GAP   = 140;   // px between artboards (at display scale)
 const DISPLAY_HEIGHT = 700;   // fixed display height for all artboards (px)
 const LABEL_HEIGHT   = 36;    // px above artboard for the name label
-const SLOT_IMAGE_BLEED_RATIO = 0.04;
-const SLOT_IMAGE_BLEED_MIN   = 20;
-const SLOT_IMAGE_BLEED_MAX   = 60;
+const SLOT_IMAGE_BLEED_RATIO = 0.08;
+const SLOT_IMAGE_BLEED_MIN   = 28;
+const SLOT_IMAGE_BLEED_MAX   = 72;
 
 // ─────────────────────────────────────────────────────────────────
 // AUTO-TEXT SYSTEM
@@ -229,7 +229,12 @@ function initCanvas() {
   canvas.on("selection:created", onSelectionChange);
   canvas.on("selection:updated", onSelectionChange);
   canvas.on("selection:cleared", onSelectionCleared);
-  canvas.on("object:modified",   () => { pushUndo(); scheduleAutosave(); });
+  canvas.on("object:modified",   e => {
+    const slotBinding = getSlotForImageObject(e.target);
+    if (slotBinding) ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, e.target);
+    pushUndo();
+    scheduleAutosave();
+  });
   canvas.on("object:added",      () => refreshLayersPanel());
   canvas.on("object:removed",    () => refreshLayersPanel());
 
@@ -518,8 +523,8 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
     const fitScale = getRequiredSlotImageScale(sw, sh, natW, natH);
 
     img.set({
-      left:     sx + sw / 2,
-      top:      sy + sh / 2,
+      left:     Math.round(sx + sw / 2),
+      top:      Math.round(sy + sh / 2),
       originX:  "center",
       originY:  "center",
       scaleX:   fitScale,
@@ -571,24 +576,28 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
 function makeSlotClip(state, slot) {
   const s = state.scale;
   return new fabric.Rect({
-    left:               state.ox + slot.x * s,
-    top:                state.oy + slot.y * s,
-    width:              slot.w * s,
-    height:             slot.h * s,
-    rx:                 (slot.radius || 0) * s,
-    ry:                 (slot.radius || 0) * s,
+    left:               Math.round(state.ox + slot.x * s),
+    top:                Math.round(state.oy + slot.y * s),
+    width:              Math.round(slot.w * s),
+    height:             Math.round(slot.h * s),
+    rx:                 Math.round((slot.radius || 0) * s),
+    ry:                 Math.round((slot.radius || 0) * s),
     absolutePositioned: true,
   });
+}
+
+function getSlotBleedPx(slotW, slotH) {
+  return clamp(
+    Math.round(Math.min(slotW, slotH) * SLOT_IMAGE_BLEED_RATIO),
+    SLOT_IMAGE_BLEED_MIN,
+    SLOT_IMAGE_BLEED_MAX
+  );
 }
 
 function getRequiredSlotImageScale(slotW, slotH, imageW, imageH) {
   if (!slotW || !slotH || !imageW || !imageH) return 1;
   // bleed: extra pixels added on each side so no dark-background gap ever shows
-  const bleed = clamp(
-    Math.round(Math.min(slotW, slotH) * SLOT_IMAGE_BLEED_RATIO),
-    SLOT_IMAGE_BLEED_MIN,
-    SLOT_IMAGE_BLEED_MAX
-  );
+  const bleed = getSlotBleedPx(slotW, slotH);
   return Math.max((slotW + bleed * 2) / imageW, (slotH + bleed * 2) / imageH);
 }
 
@@ -615,7 +624,43 @@ function ensureSlotImageCoverage(state, slot, img) {
     scaleX: nextScaleX,
     scaleY: nextScaleY,
   });
+  clampSlotImagePosition(state, slot, img);
   img.setCoords();
+}
+
+function clampSlotImagePosition(state, slot, img) {
+  if (!state || !slot || !img) return;
+  const slotLeft = state.ox + slot.x * state.scale;
+  const slotTop = state.oy + slot.y * state.scale;
+  const slotW = slot.w * state.scale;
+  const slotH = slot.h * state.scale;
+  const bleed = getSlotBleedPx(slotW, slotH);
+
+  img.setCoords();
+  const bounds = img.getBoundingRect();
+  const halfW = bounds.width / 2;
+  const halfH = bounds.height / 2;
+  const minLeft = slotLeft + slotW + bleed - halfW;
+  const maxLeft = slotLeft - bleed + halfW;
+  const minTop = slotTop + slotH + bleed - halfH;
+  const maxTop = slotTop - bleed + halfH;
+
+  if (Number.isFinite(minLeft) && Number.isFinite(maxLeft) && minLeft <= maxLeft) {
+    img.left = Math.round(clamp(img.left, minLeft, maxLeft));
+  }
+  if (Number.isFinite(minTop) && Number.isFinite(maxTop) && minTop <= maxTop) {
+    img.top = Math.round(clamp(img.top, minTop, maxTop));
+  }
+}
+
+function getSlotForImageObject(obj) {
+  const d = obj?.data || {};
+  if (d.type !== "slot-image") return null;
+  const state = ArtboardMap[d.frameId];
+  if (!state) return null;
+  const slot = state.config.slots.find(s => s.index === d.slotIndex);
+  if (!slot) return null;
+  return { state, slot };
 }
 
 function removePlaceholdersForSlot(state, slotIndex) {
@@ -1151,53 +1196,64 @@ function bindColorControls() {
     notify("Running auto color correction…", "info");
     const r = await apiFetch(`/api/auto-color/${obj.data.photoId}/`);
     if (r.success) {
-      // ── Swap image source IN-PLACE, preserving ALL existing transforms ──
-      // Snapshot every property we want to keep
-      const savedLeft    = obj.left;
-      const savedTop     = obj.top;
-      const savedScaleX  = obj.scaleX;
-      const savedScaleY  = obj.scaleY;
-      const savedAngle   = obj.angle;
-      const savedFlipX   = obj.flipX;
-      const savedFlipY   = obj.flipY;
-      const savedOriginX = obj.originX;
-      const savedOriginY = obj.originY;
-      const savedClip    = obj.clipPath;
-      const savedData    = { ...obj.data };
+      const { frameId, slotIndex } = obj.data;
 
+      // Build list: the active object + any synced-slot objects (same tall-portrait group)
+      const syncTargets = getSyncTargets(frameId, slotIndex);
+      const allSwaps = [
+        { targetObj: obj, fid: frameId, sid: slotIndex },
+        ...syncTargets
+          .map(t => ({
+            targetObj: ArtboardMap[t.frameId]?.slotImages[t.slotIndex],
+            fid: t.frameId,
+            sid: t.slotIndex,
+          }))
+          .filter(t => t.targetObj),
+      ];
+
+      // Load the corrected image once; browser caches it for subsequent swaps
       fabric.Image.fromURL(r.url, newImg => {
-        // Replace the element inside the existing Fabric Image object
-        obj._element = newImg._element;
-        obj._originalElement = newImg._originalElement;
-        obj.width    = newImg.width;
-        obj.height   = newImg.height;
+        allSwaps.forEach(({ targetObj, fid, sid }) => {
+          // Snapshot every transform so position is never disturbed
+          const snap = {
+            left:    targetObj.left,
+            top:     targetObj.top,
+            scaleX:  targetObj.scaleX,
+            scaleY:  targetObj.scaleY,
+            angle:   targetObj.angle,
+            flipX:   targetObj.flipX,
+            flipY:   targetObj.flipY,
+            originX: targetObj.originX,
+            originY: targetObj.originY,
+            clipPath: targetObj.clipPath,
+            data:    { ...targetObj.data },
+          };
 
-        // Restore all saved transforms exactly as they were
-        obj.set({
-          left:    savedLeft,
-          top:     savedTop,
-          scaleX:  savedScaleX,
-          scaleY:  savedScaleY,
-          angle:   savedAngle,
-          flipX:   savedFlipX,
-          flipY:   savedFlipY,
-          originX: savedOriginX,
-          originY: savedOriginY,
-          clipPath: savedClip,
-          data:    savedData,
+          // Swap the underlying image element in-place
+          targetObj._element         = newImg._element;
+          targetObj._originalElement = newImg._originalElement;
+          targetObj.width            = newImg.width;
+          targetObj.height           = newImg.height;
+
+          targetObj.set(snap);
+
+          const state = ArtboardMap[fid];
+          const slot  = state?.config.slots.find(s => s.index === sid);
+          ensureSlotImageCoverage(state, slot, targetObj);
+          applyFiltersToSlot(fid, sid);
+          targetObj.setCoords();
         });
 
-        // Re-apply the current filter stack on the new image data
-        const { frameId, slotIndex } = savedData;
-        const state = ArtboardMap[frameId];
-        const slot = state?.config.slots.find(s => s.index === slotIndex);
-        ensureSlotImageCoverage(state, slot, obj);
-        applyFiltersToSlot(frameId, slotIndex);
-        obj.setCoords();
         canvas.renderAll();
         pushUndo();
         scheduleAutosave();
-        notify("Auto color applied — position unchanged ✓", "success");
+        const n = allSwaps.length;
+        notify(
+          n > 1
+            ? `Auto color applied to ${n} frames ✓`
+            : "Auto color applied — position unchanged ✓",
+          "success"
+        );
       }, { crossOrigin: "anonymous" });
     } else {
       notify("Auto color failed: " + r.error, "error");
@@ -1250,6 +1306,8 @@ function bindTransformControls() {
     if (!isNaN(rot)) obj.set("angle", rot);
     if (!isNaN(w) && w > 0) obj.scaleX = w / obj.width;
     if (!isNaN(h) && h > 0) obj.scaleY = h / obj.height;
+    const slotBinding = getSlotForImageObject(obj);
+    if (slotBinding) ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, obj);
     obj.setCoords(); canvas.renderAll(); pushUndo(); scheduleAutosave();
   };
   ["tfX","tfY","tfW","tfH","tfRot"].forEach(id => document.getElementById(id)?.addEventListener("change", applyTf));
@@ -1261,9 +1319,16 @@ function bindTransformControls() {
     const o = canvas.getActiveObject(); if (!o) return;
     o.set("flipY", !o.flipY); canvas.renderAll(); pushUndo();
   });
-  canvas.on("object:moving",   e => syncTransformPanel(e.target));
-  canvas.on("object:scaling",  e => syncTransformPanel(e.target));
-  canvas.on("object:rotating", e => syncTransformPanel(e.target));
+  const keepSlotCovered = target => {
+    const slotBinding = getSlotForImageObject(target);
+    if (slotBinding) {
+      ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, target);
+    }
+    syncTransformPanel(target);
+  };
+  canvas.on("object:moving",   e => keepSlotCovered(e.target));
+  canvas.on("object:scaling",  e => keepSlotCovered(e.target));
+  canvas.on("object:rotating", e => keepSlotCovered(e.target));
 }
 
 // ─────────────────────────────────────────────────────────────────

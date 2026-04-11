@@ -4,7 +4,7 @@
 {% block title %}{{ darshan_label }} – {{ darshan_date|date:"d M Y" }} – Editor{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/editor.css' %}">
+<link rel="stylesheet" href="{% static 'css/editor.css' %}?v={{ asset_version }}">
 {% endblock %}
 
 {% block content %}
@@ -281,7 +281,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/fabric.min.js' %}"></script>
-<script src="{% static 'js/jszip.min.js' %}"></script>
-<script src="{% static 'js/editor_app.js' %}"></script>
+<script src="{% static 'js/fabric.min.js' %}?v={{ asset_version }}"></script>
+<script src="{% static 'js/jszip.min.js' %}?v={{ asset_version }}"></script>
+<script src="{% static 'js/editor_app.js' %}?v={{ asset_version }}"></script>
 {% endblock %}

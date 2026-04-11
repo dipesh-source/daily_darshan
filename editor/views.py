@@ -1,7 +1,10 @@
 import json
+import os
 from datetime import datetime
+from time import time
 
 from django.conf import settings as django_settings
+from django.contrib.staticfiles import finders
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.csrf import csrf_exempt
@@ -81,6 +84,7 @@ def darshan_editor(request, darshan_type, date=None):
         "darshan_labels": LABELS,
         "darshan_date":   darshan_date,
         "frames":         frames,
+        "asset_version":  int(time()),
         "artboards_json": json.dumps(artboards_js),
         "session_json":   json.dumps({
             "id":           str(session.id),
@@ -248,8 +252,12 @@ def api_delete_upload(request, photo_id):
 def _overlay_url(request, fc: FrameConfig) -> str | None:
     """Return absolute URL for the frame overlay image."""
     if fc.overlay_image:
-        return request.build_absolute_uri(fc.overlay_image.url)
+        version = int(os.path.getmtime(fc.overlay_image.path)) if fc.overlay_image.path and os.path.exists(fc.overlay_image.path) else int(time())
+        return request.build_absolute_uri(f"{fc.overlay_image.url}?v={version}")
     if fc.static_overlay:
         from django.templatetags.static import static
-        return request.build_absolute_uri(static(fc.static_overlay))
+        static_url = static(fc.static_overlay)
+        static_path = finders.find(fc.static_overlay)
+        version = int(os.path.getmtime(static_path)) if static_path and os.path.exists(static_path) else int(time())
+        return request.build_absolute_uri(f"{static_url}?v={version}")
     return None
