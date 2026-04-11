@@ -155,9 +155,16 @@ def api_upload_photo(request):
 
     width = height = 0
     try:
-        from PIL import Image as PILImage
+        from PIL import Image as PILImage, ImageOps as PILImageOps
         with PILImage.open(photo.image.path) as img:
-            width, height = img.size
+            # Fix EXIF rotation so the stored file is always correctly oriented.
+            # This prevents photos shot in portrait mode on phones from appearing
+            # rotated when displayed in the browser / canvas.
+            corrected = PILImageOps.exif_transpose(img)
+            if corrected is not img:
+                # Only re-save if rotation was actually needed
+                corrected.save(photo.image.path)
+            width, height = corrected.size
     except Exception:
         pass
 
