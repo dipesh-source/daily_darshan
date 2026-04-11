@@ -56,7 +56,7 @@ migrations/
 */migrations/
 **/migrations/
 # Static files
-static/
+# static/
 venv
 /env
 reports/
