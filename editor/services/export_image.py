@@ -138,10 +138,16 @@ def _paste_slot_image(base: Image.Image, obj: dict, scale: float, frame_config) 
         # Offset from clip top-left to photo top-left
         rel_x = paste_x - cx
         rel_y = paste_y - cy
-        crop_box = (-rel_x, -rel_y, -rel_x + cw, -rel_y + ch)
-        cropped = photo.crop(crop_box)
+        crop_left = max(0, math.floor(-rel_x))
+        crop_top = max(0, math.floor(-rel_y))
+        crop_right = min(photo.width, math.ceil(-rel_x + cw))
+        crop_bottom = min(photo.height, math.ceil(-rel_y + ch))
+        if crop_right <= crop_left or crop_bottom <= crop_top:
+            return
+
+        cropped = photo.crop((crop_left, crop_top, crop_right, crop_bottom))
         if cropped.size != (cw, ch):
-            cropped = _pad_or_crop(cropped, cw, ch)
+            cropped = cropped.resize((cw, ch), Image.LANCZOS)
 
         # Apply opacity to alpha
         if opacity < 255:
@@ -153,14 +159,6 @@ def _paste_slot_image(base: Image.Image, obj: dict, scale: float, frame_config) 
         region = base.crop((cx, cy, cx + cw, cy + ch))
         region = Image.composite(cropped, region, mask)
         base.paste(region, (cx, cy))
-
-
-def _pad_or_crop(img: Image.Image, w: int, h: int) -> Image.Image:
-    """Ensure image is exactly (w, h)."""
-    result = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    result.paste(img, (0, 0))
-    return result.crop((0, 0, w, h))
-
 
 def _find_slot(frame_config, slot_index: int) -> dict:
     for s in frame_config.slots:

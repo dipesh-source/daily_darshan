@@ -64,3 +64,6 @@ media/
 db.sqlite3
 docs/
 lease_revamp_env
+staticfiles/
+__pycache__/
+*.pyc
