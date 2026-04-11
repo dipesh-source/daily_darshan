@@ -457,9 +457,50 @@ function bringOverlayToFront(state) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// SLOT SYNC  — upload to one tall-portrait slot → mirrors to all
+//             equivalent tall slots in the same darshan session.
+//
+// Sync groups (frame_type → slot_index):
+//   full/0  ↔  3in1_l/0  ↔  3in1_r/2
+//
+// This covers Mangala, Shanagar (excl. left/center/right), Shayan.
+// Wide is intentionally excluded (landscape, different composition).
+// Small stacked slots in 3-in-1 (slot 1 & 2 of L, slot 0 & 1 of R)
+// are also excluded — those get individual photos.
+// ─────────────────────────────────────────────────────────────────
+const SYNC_MEMBERS = [
+  { frame_type: "full",    slotIndex: 0 },
+  { frame_type: "3in1_l",  slotIndex: 0 },
+  { frame_type: "3in1_r",  slotIndex: 2 },
+];
+
+function getSyncTargets(sourceFrameId, sourceSlotIndex) {
+  const src = ArtboardMap[sourceFrameId];
+  if (!src) return [];
+
+  // Is this slot a sync member?
+  const isMember = SYNC_MEMBERS.some(
+    m => m.frame_type === src.config.frame_type && m.slotIndex === sourceSlotIndex
+  );
+  if (!isMember) return [];
+
+  // Find all other artboards in the same darshan that are also sync members
+  return Object.values(ArtboardMap).filter(state => {
+    if (state.frameId === sourceFrameId) return false;
+    if (state.config.darshan_type !== src.config.darshan_type) return false;
+    return SYNC_MEMBERS.some(
+      m => m.frame_type === state.config.frame_type && state.config.slots.some(s => s.index === m.slotIndex)
+    );
+  }).map(state => {
+    const member = SYNC_MEMBERS.find(m => m.frame_type === state.config.frame_type);
+    return { frameId: state.frameId, slotIndex: member.slotIndex };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
 // LOAD PHOTO INTO SLOT
 // ─────────────────────────────────────────────────────────────────
-function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName) {
+function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isSyncCall = false) {
   const state = ArtboardMap[frameId];
   if (!state) return;
 
@@ -509,7 +550,21 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName) {
     scheduleAutosave();
     refreshLayersPanel();
     updateSlotPanelThumb(frameId, slotIndex, imageUrl);
-    notify(`Photo loaded into ${state.config.short_name} Slot ${slotIndex + 1}`, "success");
+
+    if (!_isSyncCall) {
+      // Mirror to all linked tall-portrait slots in this darshan
+      const targets = getSyncTargets(frameId, slotIndex);
+      targets.forEach(t => {
+        loadPhotoIntoSlot(t.frameId, t.slotIndex, imageUrl, photoId, fileName, true);
+      });
+      const syncCount = targets.length;
+      notify(
+        syncCount > 0
+          ? `Photo synced to ${syncCount + 1} frames (${state.config.short_name} + ${syncCount} others)`
+          : `Photo loaded into ${state.config.short_name} Slot ${slotIndex + 1}`,
+        "success"
+      );
+    }
   }, { crossOrigin: "anonymous" });
 }
 
