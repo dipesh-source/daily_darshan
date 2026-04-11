@@ -62,30 +62,7 @@
 
   </div>
 
-  <!-- ── Recent sessions ────────────────────────────────────────────── -->
-  {% if recent_sessions %}
-  <section class="recent-section">
-    <h2 class="section-title">Recent Sessions</h2>
-    <div class="recent-grid">
-      {% for sess in recent_sessions %}
-      <a href="{% url 'session_load' sess.id %}" class="recent-card">
-        <div class="recent-thumb">
-          <span class="recent-darshan-icon">
-            {% if sess.darshan_type == "mangala" %}🌅
-            {% elif sess.darshan_type == "shanagar" %}🌸
-            {% else %}🌙{% endif %}
-          </span>
-        </div>
-        <div class="recent-info">
-          <span class="recent-title">{{ darshan_labels|get_item:sess.darshan_type }}</span>
-          <span class="recent-date">{{ sess.darshan_date|date:"d M Y" }}</span>
-          <span class="recent-updated">{{ sess.updated_at|date:"H:i" }}</span>
-        </div>
-      </a>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
+ 
 
 </div>
 {% endblock %}

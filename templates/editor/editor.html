@@ -45,7 +45,8 @@
     <div class="topbar-right">
       <span class="save-status" id="saveStatus"></span>
       <button class="topbar-btn-primary"       id="btnSave"   title="Save (Ctrl+S)">Save</button>
-      <button class="topbar-btn-primary green"  id="btnExport" title="Export active artboard">Export PNG</button>
+      <button class="topbar-btn-primary green"  id="btnExport"    title="Export active artboard (native resolution)">Export PNG</button>
+      <button class="topbar-btn-primary green"  id="btnExportAll" title="Export all frames with photos">Export All</button>
     </div>
   </div>
 
@@ -272,5 +273,6 @@
 
 {% block extra_js %}
 <script src="{% static 'js/fabric.min.js' %}"></script>
+<script src="{% static 'js/jszip.min.js' %}"></script>
 <script src="{% static 'js/editor_app.js' %}"></script>
 {% endblock %}

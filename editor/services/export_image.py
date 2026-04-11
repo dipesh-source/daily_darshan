@@ -12,11 +12,10 @@ Object types handled:
 
 import math
 import os
-from io import BytesIO
 from pathlib import Path
 
 from django.conf import settings
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,18 +59,13 @@ def render_composition(composition) -> str:
                 overlay = overlay.resize((native_w, native_h), Image.LANCZOS)
                 base = Image.alpha_composite(base, overlay)
 
-    # Convert to RGB for final PNG save
+    # Convert to RGB for final PNG save (lossless, no compression)
     final = base.convert("RGB")
 
-    # Save
     export_dir = Path(settings.MEDIA_ROOT) / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     out_path = export_dir / f"{composition.id}.png"
-    final.save(str(out_path), "PNG", optimize=True)
-
-    # Update record
-    composition.export_path = str(out_path)
-    composition.save(update_fields=["export_path"])
+    final.save(str(out_path), "PNG", compress_level=0)  # 0 = no compression, fastest
 
     return str(out_path)
 
