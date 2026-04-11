@@ -167,6 +167,7 @@ document.addEventListener("DOMContentLoaded", () => {
   computeLayout();
   initCanvas();
   initArtboards();
+  initRulers();
   bindToolButtons();
   bindArtboardTabs();
   bindColorControls();
@@ -1325,10 +1326,13 @@ function bindTransformControls() {
       ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, target);
     }
     syncTransformPanel(target);
+    updateHud(target);
   };
   canvas.on("object:moving",   e => keepSlotCovered(e.target));
   canvas.on("object:scaling",  e => keepSlotCovered(e.target));
   canvas.on("object:rotating", e => keepSlotCovered(e.target));
+  canvas.on("mouse:up",        () => hideHud());
+  canvas.on("selection:cleared", () => hideHud());
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1884,6 +1888,213 @@ async function apiFormPost(url, fd) {
 }
 function csrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/); return m ? m[1] : "";
+}
+
+// GRID + RULERS — drawn directly on Fabric's canvas via after:render
+const RULER_SIZE = 20;
+let gridVisible = true;
+let _gMouseX = -1, _gMouseY = -1, _gRafPending = false;
+
+function initRulers() {
+  canvas.on("mouse:move", opt => {
+    _gMouseX = opt.e.offsetX; _gMouseY = opt.e.offsetY;
+    if (!_gRafPending) {
+      _gRafPending = true;
+      requestAnimationFrame(() => { _gRafPending = false; canvas.requestRenderAll(); });
+    }
+  });
+  canvas.on("mouse:out", () => { _gMouseX = -1; _gMouseY = -1; canvas.requestRenderAll(); });
+  canvas.on("after:render", _drawGridAndRulers);
+  document.getElementById("btnToggleGrid")?.addEventListener("click", () => {
+    gridVisible = !gridVisible;
+    document.getElementById("btnToggleGrid").classList.toggle("active", gridVisible);
+    canvas.requestRenderAll();
+  });
+}
+
+function _gridStep(zoom) {
+  const target = 80 / zoom;
+  const exp = Math.floor(Math.log10(target));
+  const frac = target / Math.pow(10, exp);
+  const nice = frac < 1.5 ? 1 : frac < 3.5 ? 2 : frac < 7.5 ? 5 : 10;
+  return nice * Math.pow(10, exp);
+}
+function _rulerLabel(px) {
+  if (Math.abs(px) >= 1000) return (px/1000).toFixed(1) + "k";
+  return Math.round(px) + "";
+}
+
+function _drawGridAndRulers() {
+  const ctx = canvas.lowerCanvasEl.getContext("2d");
+  const vpt = canvas.viewportTransform;
+  if (!ctx || !vpt) return;
+  const zoom = vpt[0], tx = vpt[4], ty = vpt[5];
+  const W = canvas.lowerCanvasEl.width, H = canvas.lowerCanvasEl.height;
+  const R = RULER_SIZE;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const step = _gridStep(zoom), subStep = step / 4;
+  const wx0 = (R-tx)/zoom, wx1 = (W-tx)/zoom;
+  const wy0 = (R-ty)/zoom, wy1 = (H-ty)/zoom;
+  // Minor grid
+  if (gridVisible) {
+    ctx.strokeStyle = "rgba(255,255,255,0.04)"; ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (let wx = Math.ceil(wx0/subStep)*subStep; wx<=wx1; wx+=subStep) {
+      if (Math.abs(((wx/step)%1+1)%1) < 0.001) continue;
+      const sx = Math.round(wx*zoom+tx)+0.5; ctx.moveTo(sx,R); ctx.lineTo(sx,H);
+    }
+    for (let wy = Math.ceil(wy0/subStep)*subStep; wy<=wy1; wy+=subStep) {
+      if (Math.abs(((wy/step)%1+1)%1) < 0.001) continue;
+      const sy = Math.round(wy*zoom+ty)+0.5; ctx.moveTo(R,sy); ctx.lineTo(W,sy);
+    }
+    ctx.stroke();
+    // Major grid
+    ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (let wx=Math.ceil(wx0/step)*step; wx<=wx1; wx+=step) {
+      const sx=Math.round(wx*zoom+tx)+0.5; ctx.moveTo(sx,R); ctx.lineTo(sx,H);
+    }
+    for (let wy=Math.ceil(wy0/step)*step; wy<=wy1; wy+=step) {
+      const sy=Math.round(wy*zoom+ty)+0.5; ctx.moveTo(R,sy); ctx.lineTo(W,sy);
+    }
+    ctx.stroke();
+  }
+  // Cursor crosshair
+  if (_gMouseX >= R && _gMouseY >= R) {
+    ctx.strokeStyle="rgba(232,133,90,0.55)"; ctx.lineWidth=0.5; ctx.setLineDash([4,4]);
+    ctx.beginPath();
+    ctx.moveTo(_gMouseX+0.5,R); ctx.lineTo(_gMouseX+0.5,H);
+    ctx.moveTo(R,_gMouseY+0.5); ctx.lineTo(W,_gMouseY+0.5);
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  // Ruler backgrounds
+  ctx.fillStyle="#1c1c1c";
+  ctx.fillRect(0,0,W,R); ctx.fillRect(0,R,R,H-R);
+  ctx.fillStyle="#222"; ctx.fillRect(0,0,R,R);
+  ctx.strokeStyle="#383838"; ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(0,R-0.5); ctx.lineTo(W,R-0.5);
+  ctx.moveTo(R-0.5,R); ctx.lineTo(R-0.5,H);
+  ctx.stroke();
+  // Ticks and labels
+  const TICK="#555", TICKM="#383838", LBL="#777", CARET="#e8855a";
+  const sxf = wx => Math.round(wx*zoom+tx)+0.5;
+  const syf = wy => Math.round(wy*zoom+ty)+0.5;
+  ctx.strokeStyle=TICKM; ctx.lineWidth=1; ctx.beginPath();
+  for (let wx=Math.ceil(wx0/subStep)*subStep; wx<=wx1; wx+=subStep) {
+    if (Math.abs(((wx/step)%1+1)%1)<0.001) continue;
+    const x=sxf(wx); if(x<R||x>W) continue;
+    ctx.moveTo(x,R*0.65); ctx.lineTo(x,R-0.5);
+  }
+  for (let wy=Math.ceil(wy0/subStep)*subStep; wy<=wy1; wy+=subStep) {
+    if (Math.abs(((wy/step)%1+1)%1)<0.001) continue;
+    const y=syf(wy); if(y<R||y>H) continue;
+    ctx.moveTo(R*0.65,y); ctx.lineTo(R-0.5,y);
+  }
+  ctx.stroke();
+  ctx.font="9px system-ui,sans-serif"; ctx.textBaseline="top"; ctx.textAlign="left";
+  for (let wx=Math.ceil(wx0/step)*step; wx<=wx1; wx+=step) {
+    const x=sxf(wx); if(x<R||x>W) continue;
+    ctx.strokeStyle=TICK; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,R*0.25); ctx.lineTo(x,R-0.5); ctx.stroke();
+    ctx.fillStyle=LBL; ctx.fillText(_rulerLabel(wx),Math.min(x+2,W-30),3);
+  }
+  for (let wy=Math.ceil(wy0/step)*step; wy<=wy1; wy+=step) {
+    const y=syf(wy); if(y<R||y>H) continue;
+    ctx.strokeStyle=TICK; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(R*0.25,y); ctx.lineTo(R-0.5,y); ctx.stroke();
+    ctx.save(); ctx.translate(R-3,Math.min(y-2,H-4)); ctx.rotate(-Math.PI/2);
+    ctx.font="9px system-ui,sans-serif"; ctx.textBaseline="bottom"; ctx.textAlign="left";
+    ctx.fillStyle=LBL; ctx.fillText(_rulerLabel(wy),0,0); ctx.restore();
+  }
+  // Cursor indicators on ruler
+  if (_gMouseX >= R) {
+    ctx.fillStyle=CARET;
+    ctx.fillRect(_gMouseX-0.5,0,1,R-1);
+    ctx.font="bold 9px system-ui,sans-serif"; ctx.textBaseline="top"; ctx.textAlign="left";
+    ctx.fillText(Math.round((_gMouseX-tx)/zoom)+"px",Math.min(_gMouseX+3,W-40),3);
+  }
+  if (_gMouseY >= R) {
+    ctx.fillStyle=CARET; ctx.fillRect(0,_gMouseY-0.5,R-1,1);
+    ctx.save(); ctx.translate(R-3,Math.min(_gMouseY+20,H-4)); ctx.rotate(-Math.PI/2);
+    ctx.font="bold 9px system-ui,sans-serif"; ctx.textBaseline="bottom"; ctx.textAlign="left";
+    ctx.fillStyle=CARET; ctx.fillText(Math.round((_gMouseY-ty)/zoom)+"px",0,0); ctx.restore();
+  }
+  ctx.restore();
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// ADJUSTMENT HUD — real-time % readout while moving/scaling images
+// ─────────────────────────────────────────────────────────────────
+function _getSlotBinding(obj) {
+  if (!obj?.data || obj.data.type !== "slot-image") return null;
+  const { frameId, slotIndex } = obj.data;
+  const state = ArtboardMap[frameId];
+  if (!state) return null;
+  const slot = state.config.slots.find(s => s.index === slotIndex);
+  return slot ? { state, slot } : null;
+}
+
+function updateHud(obj) {
+  const hud = document.getElementById("adjustHud");
+  if (!hud || !obj) return;
+
+  const binding = _getSlotBinding(obj);
+  if (!binding) { hud.style.display = "none"; return; }
+
+  const { state, slot } = binding;
+  const s        = state.scale;
+  const slotLeft = state.ox + slot.x * s;
+  const slotTop  = state.oy + slot.y * s;
+  const slotW    = slot.w * s;
+  const slotH    = slot.h * s;
+
+  // Image center as % within slot  (50 = perfectly centred)
+  const px = ((obj.left - slotLeft) / slotW * 100);
+  const py = ((obj.top  - slotTop ) / slotH * 100);
+
+  // Zoom % relative to minimum-fit scale  (100 = just covers slot)
+  const { w: natW, h: natH } = imgNaturalDims(obj);
+  const minSc  = getRequiredSlotImageScale(slotW, slotH, natW, natH);
+  const zoomPct = minSc > 0 ? Math.round((obj.scaleX / minSc) * 100) : 100;
+
+  const rot    = Math.round(obj.angle || 0);
+  const isCenX = Math.abs(px - 50) < 2;
+  const isCenY = Math.abs(py - 50) < 2;
+
+  // Object centre in canvas-area screen coordinates
+  const vpt   = canvas.viewportTransform;
+  const area  = document.getElementById("canvasArea");
+  const scrX  = obj.left * vpt[0] + vpt[4];   // screen x (0 = left of canvas-area)
+  const scrY  = obj.top  * vpt[3] + vpt[5];   // screen y (0 = top  of canvas-area)
+  const hudW  = 150;
+  let hudX = scrX + 14;
+  let hudY = scrY - 36;
+  if (hudX + hudW > area.clientWidth  - 8) hudX = scrX - hudW - 14;
+  // Don't overlap the horizontal ruler (top 20px)
+  if (hudY < RULER_SIZE + 4) hudY = scrY + 14;
+
+  hud.style.left    = Math.max(RULER_SIZE + 4, hudX) + "px";
+  hud.style.top     = Math.max(RULER_SIZE + 4, hudY) + "px";
+  hud.style.display = "block";
+
+  hud.innerHTML =
+    `<div class="hud-title">Slot ${slot.index + 1} of ${state.config.short_name}</div>` +
+    `<div class="hud-row"><span class="hud-label">↔ X pos</span>` +
+      `<span class="hud-val${isCenX ? " hud-center" : ""}">${px.toFixed(1)}%</span></div>` +
+    `<div class="hud-row"><span class="hud-label">↕ Y pos</span>` +
+      `<span class="hud-val${isCenY ? " hud-center" : ""}">${py.toFixed(1)}%</span></div>` +
+    `<div class="hud-row"><span class="hud-label">⊕ Zoom</span>` +
+      `<span class="hud-val">${zoomPct}%</span></div>` +
+    (rot ? `<div class="hud-row"><span class="hud-label">↻ Angle</span>` +
+      `<span class="hud-val">${rot}°</span></div>` : "");
+}
+
+function hideHud() {
+  const hud = document.getElementById("adjustHud");
+  if (hud) hud.style.display = "none";
 }
 
 // ─────────────────────────────────────────────────────────────────

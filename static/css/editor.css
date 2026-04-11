@@ -52,6 +52,8 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
   transition: background .12s;
 }
 .topbar-btn:hover { background: var(--editor-hover); }
+.topbar-btn.active { background: #2A3A28; color: #7FD89A; }
+.topbar-btn.active:hover { background: #344530; }
 .topbar-btn.danger:hover { background: #4A1010; color: #FF8888; }
 .topbar-divider { width: 1px; height: 18px; background: var(--editor-border); margin: 0 3px; }
 .zoom-display   { font-size: 11px; color: var(--editor-muted); min-width: 40px; text-align: center; }
@@ -279,6 +281,37 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 /* The Fabric canvas sits inside canvas-area and fills it */
 .canvas-area .canvas-container { display: block !important; }
 .canvas-area canvas { display: block; }
+
+/* ── Adjustment HUD ─────────────────────────────────────── */
+.adjust-hud {
+  position: absolute;
+  background: rgba(20, 20, 20, 0.92);
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #ccc;
+  pointer-events: none;
+  z-index: 30;
+  min-width: 120px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}
+.hud-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid #333;
+  padding-bottom: 3px;
+}
+.hud-row { display: flex; justify-content: space-between; gap: 14px; }
+.hud-label { color: #666; }
+.hud-val { color: #e0e0e0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hud-val.hud-center { color: #7fd89a; }  /* green when at 50% = centered */
 
 /* ── Artboard floating labels ─────────────────────────────── */
 .artboard-labels {

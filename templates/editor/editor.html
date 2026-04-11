@@ -39,6 +39,8 @@
       <button class="topbar-btn" id="btnZoomIn"    title="Zoom In (+)">+</button>
       <button class="topbar-btn" id="btnFitAll"    title="Fit all artboards (F)">⤢</button>
       <div class="topbar-divider"></div>
+      <button class="topbar-btn active" id="btnToggleGrid" title="Toggle Grid (G)">⊞</button>
+      <div class="topbar-divider"></div>
       <button class="topbar-btn danger" id="btnDeleteSelected" title="Delete selected (Del)">🗑</button>
     </div>
 
@@ -235,6 +237,8 @@
       <!-- Artboard labels float above their artboard on the infinite canvas -->
       <div class="artboard-labels" id="artboardLabels"></div>
       <canvas id="mainCanvas"></canvas>
+      <!-- Real-time adjustment HUD -->
+      <div class="adjust-hud" id="adjustHud" style="display:none"></div>
     </div>
 
     <!-- ── RIGHT PANEL ────────────────────────────────────────── -->
