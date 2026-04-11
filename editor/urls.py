@@ -3,7 +3,7 @@ from . import views
 
 urlpatterns = [
     # ── Pages ──────────────────────────────────────────────────────────────────
-    path("", views.dashboard, name="dashboard"),
+    path("", views.root_redirect, name="dashboard"),
 
     # Multi-artboard editor: all frames for one darshan type on one date
     path("darshan/<str:darshan_type>/",               views.darshan_editor, name="darshan_editor"),

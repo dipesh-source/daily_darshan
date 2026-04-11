@@ -12,12 +12,11 @@
 <body>
   <header class="app-header">
     <div class="header-inner">
-      <a href="{% url 'dashboard' %}" class="brand">
+      <a href="{% url 'darshan_editor' 'mangala' %}" class="brand">
         <span class="brand-icon">🪔</span>
         <span class="brand-name">Daily Darshan Editor</span>
       </a>
       <nav class="header-nav">
-        <a href="{% url 'dashboard' %}" class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Home</a>
         <a href="{% url 'gallery' %}" class="nav-link {% if request.resolver_match.url_name == 'gallery' %}active{% endif %}">Gallery</a>
         <a href="/admin/" class="nav-link" target="_blank">Settings</a>
       </nav>

@@ -68,6 +68,16 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 
 .save-status { font-size: 11px; color: var(--editor-muted); }
 
+.darshan-switcher { display: flex; gap: 4px; align-items: center; }
+.topbar-btn-switch {
+  height: 28px; padding: 0 12px;
+  border-radius: var(--radius-sm); font-size: 12px; font-weight: 600;
+  background: #2A3A5A; color: #8BB4E8;
+  text-decoration: none; display: flex; align-items: center;
+  transition: background .12s;
+}
+.topbar-btn-switch:hover { background: #354A6E; color: #C0D8FF; }
+
 /* ── Main area ─────────────────────────────────────────────── */
 .editor-main { display: flex; flex: 1; overflow: hidden; }
 

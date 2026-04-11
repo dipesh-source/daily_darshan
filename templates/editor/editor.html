@@ -43,6 +43,15 @@
     </div>
 
     <div class="topbar-right">
+      <div class="darshan-switcher">
+        {% for key, label in darshan_labels.items %}
+          {% if key != darshan_type %}
+            <a href="{% url 'darshan_editor_date' key darshan_date|date:'Y-m-d' %}"
+               class="topbar-btn-switch">{{ label }}</a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="topbar-divider"></div>
       <span class="save-status" id="saveStatus"></span>
       <button class="topbar-btn-primary"       id="btnSave"   title="Save (Ctrl+S)">Save</button>
       <button class="topbar-btn-primary green"  id="btnExport"    title="Export active artboard (native resolution)">Export PNG</button>

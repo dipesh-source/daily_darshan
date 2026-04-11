@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime
+from datetime import datetime
 
 from django.conf import settings as django_settings
 from django.http import JsonResponse
@@ -16,30 +16,9 @@ from .services.export_image import render_composition
 # Page views
 # ─────────────────────────────────────────────────────────────────────────────
 
-def dashboard(request):
-    configs = list(FrameConfig.objects.all())
-
-    DARSHAN_ORDER = ["mangala", "shanagar", "shayan"]
-    DARSHAN_LABELS = {
-        "mangala":  "Mangala Darshan",
-        "shanagar": "Shanagar Darshan",
-        "shayan":   "Shayan Darshan",
-    }
-    grouped = {}
-    for key in DARSHAN_ORDER:
-        grouped[key] = {
-            "label":  DARSHAN_LABELS[key],
-            "frames": [c for c in configs if c.darshan_type == key],
-        }
-
-    recent_sessions = DarshanSession.objects.order_by("-updated_at")[:12]
-
-    return render(request, "editor/index.html", {
-        "grouped":         grouped,
-        "recent_sessions": recent_sessions,
-        "today":           date.today(),
-        "darshan_labels":  DARSHAN_LABELS,
-    })
+def root_redirect(_request):
+    from django.shortcuts import redirect
+    return redirect("darshan_editor", darshan_type="mangala")
 
 
 def darshan_editor(request, darshan_type, date=None):
@@ -99,6 +78,7 @@ def darshan_editor(request, darshan_type, date=None):
         "session":        session,
         "darshan_type":   darshan_type,
         "darshan_label":  LABELS[darshan_type],
+        "darshan_labels": LABELS,
         "darshan_date":   darshan_date,
         "frames":         frames,
         "artboards_json": json.dumps(artboards_js),
