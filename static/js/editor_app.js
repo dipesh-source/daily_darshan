@@ -979,21 +979,33 @@ function renderArtboardListPanel() {
 function scrollToArtboard(frameId) {
   const state = ArtboardMap[frameId];
   if (!state) return;
-  const areaW = canvas.width;
-  const areaH = canvas.height;
-  // Zoom so the artboard fills ~88% of the viewport
+
+  // Use the visible canvasArea div dimensions, NOT canvas.width/height.
+  // canvas element is sized to the full infinite layout (can be 3000+px wide)
+  // but the user only sees the canvasArea viewport.
+  const area  = document.getElementById("canvasArea");
+  const viewW = area.clientWidth  || window.innerWidth  - 480;
+  const viewH = area.clientHeight || window.innerHeight - 48;
+
+  // Fit artboard into 90% of the visible viewport, never exceed 200% zoom
+  const padding = 0.90;
   const zoom = Math.min(
-    (areaW * 0.88) / state.dispW,
-    (areaH * 0.88) / state.dispH,
-    2.0   // never zoom in past 200%
+    (viewW * padding) / state.dispW,
+    (viewH * padding) / state.dispH,
+    2.0
   );
+
+  // Center of the artboard in world coordinates
   const cx = state.ox + state.dispW / 2;
   const cy = state.oy + state.dispH / 2;
+
+  // Pan so the artboard center lands at the viewport center
   const vpt = canvas.viewportTransform.slice();
   vpt[0] = zoom; vpt[3] = zoom;
-  vpt[4] = areaW / 2 - cx * zoom;
-  vpt[5] = areaH / 2 - cy * zoom;
+  vpt[4] = viewW / 2 - cx * zoom;
+  vpt[5] = viewH / 2 - cy * zoom;
   canvas.setViewportTransform(vpt);
+  canvas.requestRenderAll();
   updateLabelPositions();
   updateZoomDisplay();
 }
@@ -1448,19 +1460,22 @@ function adjustZoom(factor) {
   updateZoomDisplay(); updateLabelPositions();
 }
 function fitAll() {
-  // Compute bounding rect of all artboards, zoom to fit
-  const xs = Object.values(ArtboardMap).map(a => a.ox);
-  const ys = Object.values(ArtboardMap).map(a => a.oy);
-  const x2 = Math.max(...Object.values(ArtboardMap).map(a => a.ox + a.dispW));
-  const y2 = Math.max(...Object.values(ArtboardMap).map(a => a.oy + a.dispH));
+  const area  = document.getElementById("canvasArea");
+  const viewW = area.clientWidth  || window.innerWidth  - 480;
+  const viewH = area.clientHeight || window.innerHeight - 48;
+
+  const xs   = Object.values(ArtboardMap).map(a => a.ox);
+  const ys   = Object.values(ArtboardMap).map(a => a.oy);
+  const x2   = Math.max(...Object.values(ArtboardMap).map(a => a.ox + a.dispW));
+  const y2   = Math.max(...Object.values(ArtboardMap).map(a => a.oy + a.dispH));
   const allW = x2 - Math.min(...xs) + 120;
   const allH = y2 - Math.min(...ys) + 100;
-  const zoom = Math.min(canvas.width / allW, canvas.height / allH, 1) * 0.92;
+  const zoom = Math.min(viewW / allW, viewH / allH, 1) * 0.92;
   const cx   = (Math.min(...xs) + x2) / 2;
   const cy   = (Math.min(...ys) + y2) / 2;
   canvas.setZoom(zoom);
-  canvas.viewportTransform[4] = canvas.width  / 2 - cx * zoom;
-  canvas.viewportTransform[5] = canvas.height / 2 - cy * zoom;
+  canvas.viewportTransform[4] = viewW / 2 - cx * zoom;
+  canvas.viewportTransform[5] = viewH / 2 - cy * zoom;
   canvas.requestRenderAll();
   updateZoomDisplay(); updateLabelPositions();
 }
