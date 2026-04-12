@@ -278,8 +278,12 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
   position: relative;
 }
 
-/* The Fabric canvas sits inside canvas-area and fills it */
-.canvas-area .canvas-container { display: block !important; }
+/* The Fabric canvas sits inside canvas-area and fills it exactly */
+.canvas-area .canvas-container {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+}
 .canvas-area canvas { display: block; }
 
 /* ── Adjustment HUD ─────────────────────────────────────── */

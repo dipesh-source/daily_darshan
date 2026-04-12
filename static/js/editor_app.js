@@ -20,9 +20,9 @@
 const ARTBOARD_GAP   = 140;   // px between artboards (at display scale)
 const DISPLAY_HEIGHT = 700;   // fixed display height for all artboards (px)
 const LABEL_HEIGHT   = 36;    // px above artboard for the name label
-const SLOT_IMAGE_BLEED_RATIO = 0.08;
-const SLOT_IMAGE_BLEED_MIN   = 28;
-const SLOT_IMAGE_BLEED_MAX   = 72;
+const SLOT_IMAGE_BLEED_RATIO = 0.025;
+const SLOT_IMAGE_BLEED_MIN   = 10;
+const SLOT_IMAGE_BLEED_MAX   = 20;
 
 // ─────────────────────────────────────────────────────────────────
 // AUTO-TEXT SYSTEM
@@ -180,6 +180,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAutoTextSync();
   activateArtboard(window.ARTBOARDS[0].id);
   renderArtboardListPanel();
+  // Fit all artboards into view on startup
+  requestAnimationFrame(fitAll);
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -210,18 +212,34 @@ function computeLayout() {
 // ─────────────────────────────────────────────────────────────────
 function initCanvas() {
   const area = document.getElementById("canvasArea");
-  // Size the canvas element to exactly fill the area (viewport pan handled by Fabric vpt)
+  // Canvas element = viewport size only. Fabric's viewport transform handles pan/zoom.
+  // DO NOT size to world layout dimensions — that causes clipping when zoomed in.
   const areaW = area.clientWidth  || window.innerWidth  - 480;
   const areaH = area.clientHeight || window.innerHeight - 48;
 
   canvas = new fabric.Canvas("mainCanvas", {
-    width:                  Math.max(areaW, canvasTotalW),
-    height:                 Math.max(areaH, canvasH),
+    width:                  areaW,
+    height:                 areaH,
     backgroundColor:        "#141414",
     preserveObjectStacking: true,
     selection:              true,
     stopContextMenu:        true,
   });
+
+  // Keep canvas pixel-perfect with the viewport at all times
+  const _onResize = () => {
+    const w = area.clientWidth  || window.innerWidth  - 480;
+    const h = area.clientHeight || window.innerHeight - 48;
+    canvas.setDimensions({ width: w, height: h });
+    canvas.requestRenderAll();
+    updateLabelPositions();
+    updateZoomDisplay();
+  };
+  window.addEventListener("resize", _onResize);
+  // Also watch for sidebar collapse / panel resize via ResizeObserver
+  if (window.ResizeObserver) {
+    new ResizeObserver(_onResize).observe(area);
+  }
 
   canvas.on("mouse:wheel",  onWheel);
   canvas.on("mouse:down",   onMouseDown);
@@ -232,7 +250,10 @@ function initCanvas() {
   canvas.on("selection:cleared", onSelectionCleared);
   canvas.on("object:modified",   e => {
     const slotBinding = getSlotForImageObject(e.target);
-    if (slotBinding) ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, e.target);
+    if (slotBinding) {
+      e.target.data = { ...(e.target.data || {}), manualCrop: true };
+      ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, e.target);
+    }
     pushUndo();
     scheduleAutosave();
   });
@@ -396,6 +417,7 @@ function loadArtboardFromJSON(state, savedJSON) {
         state.slotImages[d.slotIndex] = obj;
         const slot = state.config.slots.find(s => s.index === d.slotIndex);
         obj.clipPath = makeSlotClip(state, slot);
+        if (slot && !d.manualCrop) applyDefaultSlotImageVerticalBias(state, slot, obj);
         ensureSlotImageCoverage(state, slot, obj);
       }
       if (d.type === "frame-overlay" && d.frameId === state.frameId) {
@@ -522,10 +544,11 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
   fabric.Image.fromURL(imageUrl, img => {
     const { w: natW, h: natH } = imgNaturalDims(img);
     const fitScale = getRequiredSlotImageScale(sw, sh, natW, natH);
+    const initialCenter = getInitialSlotImageCenter(state, slot, fitScale, natW, natH);
 
     img.set({
-      left:     Math.round(sx + sw / 2),
-      top:      Math.round(sy + sh / 2),
+      left:     initialCenter.left,
+      top:      initialCenter.top,
       originX:  "center",
       originY:  "center",
       scaleX:   fitScale,
@@ -534,7 +557,7 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
       hasControls:   true,
       hasBorders:    true,
       lockUniScaling: false,
-      data: { type: "slot-image", frameId, slotIndex, photoId, fileName: fileName || "" },
+      data: { type: "slot-image", frameId, slotIndex, photoId, fileName: fileName || "", manualCrop: false },
     });
 
     // Clip to the slot shape
@@ -629,8 +652,8 @@ function ensureSlotImageCoverage(state, slot, img) {
   img.setCoords();
 }
 
-function clampSlotImagePosition(state, slot, img) {
-  if (!state || !slot || !img) return;
+function getSlotImageMovementBounds(state, slot, img) {
+  if (!state || !slot || !img) return null;
   const slotLeft = state.ox + slot.x * state.scale;
   const slotTop = state.oy + slot.y * state.scale;
   const slotW = slot.w * state.scale;
@@ -641,17 +664,73 @@ function clampSlotImagePosition(state, slot, img) {
   const bounds = img.getBoundingRect();
   const halfW = bounds.width / 2;
   const halfH = bounds.height / 2;
-  const minLeft = slotLeft + slotW + bleed - halfW;
-  const maxLeft = slotLeft - bleed + halfW;
-  const minTop = slotTop + slotH + bleed - halfH;
-  const maxTop = slotTop - bleed + halfH;
 
-  if (Number.isFinite(minLeft) && Number.isFinite(maxLeft) && minLeft <= maxLeft) {
-    img.left = Math.round(clamp(img.left, minLeft, maxLeft));
+  return {
+    slotLeft,
+    slotTop,
+    slotW,
+    slotH,
+    bleed,
+    minLeft: slotLeft + slotW + bleed - halfW,
+    maxLeft: slotLeft - bleed + halfW,
+    minTop: slotTop + slotH + bleed - halfH,
+    maxTop: slotTop - bleed + halfH,
+  };
+}
+
+function clampSlotImagePosition(state, slot, img) {
+  const movement = getSlotImageMovementBounds(state, slot, img);
+  if (!movement) return;
+
+  if (Number.isFinite(movement.minLeft) && Number.isFinite(movement.maxLeft) && movement.minLeft <= movement.maxLeft) {
+    img.left = Math.round(clamp(img.left, movement.minLeft, movement.maxLeft));
   }
-  if (Number.isFinite(minTop) && Number.isFinite(maxTop) && minTop <= maxTop) {
-    img.top = Math.round(clamp(img.top, minTop, maxTop));
+  if (Number.isFinite(movement.minTop) && Number.isFinite(movement.maxTop) && movement.minTop <= movement.maxTop) {
+    img.top = Math.round(clamp(img.top, movement.minTop, movement.maxTop));
   }
+}
+
+function getInitialSlotImageCenter(state, slot, fitScale, natW, natH) {
+  const slotCenterLeft = Math.round(state.ox + (slot.x + slot.w / 2) * state.scale);
+  const slotCenterTop = Math.round(state.oy + (slot.y + slot.h / 2) * state.scale);
+  const imgProbe = new fabric.Rect({
+    left: slotCenterLeft,
+    top: slotCenterTop,
+    originX: "center",
+    originY: "center",
+    width: natW,
+    height: natH,
+    scaleX: fitScale,
+    scaleY: fitScale,
+    angle: 0,
+  });
+  const movement = getSlotImageMovementBounds(state, slot, imgProbe);
+  if (!movement) {
+    return { left: slotCenterLeft, top: slotCenterTop };
+  }
+
+  return {
+    left: slotCenterLeft,
+    top: Math.round(getDefaultSlotVerticalTop(state, slot, movement, slotCenterTop)),
+  };
+}
+
+function applyDefaultSlotImageVerticalBias(state, slot, img) {
+  const movement = getSlotImageMovementBounds(state, slot, img);
+  if (!movement) return;
+  const defaultTop = getDefaultSlotVerticalTop(state, slot, movement, img.top);
+  img.set({ top: Math.round(defaultTop) });
+}
+
+function getDefaultSlotVerticalTop(state, slot, movement, fallbackTop) {
+  const isStackedSlot = slot.h < state.config.canvas_height * 0.6;
+  if (!isStackedSlot) return fallbackTop;
+
+  const slotMidY = slot.y + slot.h / 2;
+  if (slotMidY <= state.config.canvas_height / 2) {
+    return movement.maxTop;
+  }
+  return movement.minTop;
 }
 
 function getSlotForImageObject(obj) {
@@ -1026,19 +1105,17 @@ function scrollToArtboard(frameId) {
   const state = ArtboardMap[frameId];
   if (!state) return;
 
-  // Use the visible canvasArea div dimensions, NOT canvas.width/height.
-  // canvas element is sized to the full infinite layout (can be 3000+px wide)
-  // but the user only sees the canvasArea viewport.
   const area  = document.getElementById("canvasArea");
   const viewW = area.clientWidth  || window.innerWidth  - 480;
   const viewH = area.clientHeight || window.innerHeight - 48;
 
-  // Fit artboard into 90% of the visible viewport, never exceed 200% zoom
-  const padding = 0.90;
+  // Fit artboard into 88% of the visible viewport.
+  // No artificial upper cap — the viewport itself is the boundary now that
+  // canvas dimensions always equal the viewport size.
+  const padding = 0.88;
   const zoom = Math.min(
     (viewW * padding) / state.dispW,
-    (viewH * padding) / state.dispH,
-    2.0
+    (viewH * padding) / state.dispH
   );
 
   // Center of the artboard in world coordinates
@@ -1308,7 +1385,10 @@ function bindTransformControls() {
     if (!isNaN(w) && w > 0) obj.scaleX = w / obj.width;
     if (!isNaN(h) && h > 0) obj.scaleY = h / obj.height;
     const slotBinding = getSlotForImageObject(obj);
-    if (slotBinding) ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, obj);
+    if (slotBinding) {
+      obj.data = { ...(obj.data || {}), manualCrop: true };
+      ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, obj);
+    }
     obj.setCoords(); canvas.renderAll(); pushUndo(); scheduleAutosave();
   };
   ["tfX","tfY","tfW","tfH","tfRot"].forEach(id => document.getElementById(id)?.addEventListener("change", applyTf));
@@ -1320,17 +1400,13 @@ function bindTransformControls() {
     const o = canvas.getActiveObject(); if (!o) return;
     o.set("flipY", !o.flipY); canvas.renderAll(); pushUndo();
   });
-  const keepSlotCovered = target => {
-    const slotBinding = getSlotForImageObject(target);
-    if (slotBinding) {
-      ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, target);
-    }
+  const syncTransformHud = target => {
     syncTransformPanel(target);
     updateHud(target);
   };
-  canvas.on("object:moving",   e => keepSlotCovered(e.target));
-  canvas.on("object:scaling",  e => keepSlotCovered(e.target));
-  canvas.on("object:rotating", e => keepSlotCovered(e.target));
+  canvas.on("object:moving",   e => syncTransformHud(e.target));
+  canvas.on("object:scaling",  e => syncTransformHud(e.target));
+  canvas.on("object:rotating", e => syncTransformHud(e.target));
   canvas.on("mouse:up",        () => hideHud());
   canvas.on("selection:cleared", () => hideHud());
 }
@@ -1609,6 +1685,7 @@ function restoreAll(snapStr) {
           const slot = state.config.slots.find(s => s.index === d.slotIndex);
           state.slotImages[d.slotIndex] = obj;
           obj.clipPath = makeSlotClip(state, slot);
+          if (slot && !d.manualCrop) applyDefaultSlotImageVerticalBias(state, slot, obj);
           ensureSlotImageCoverage(state, slot, obj);
         }
         if (d.type === "frame-overlay") { state.overlayObj = obj; obj.set({selectable:false,evented:false}); }
