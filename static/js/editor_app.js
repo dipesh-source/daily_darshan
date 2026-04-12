@@ -80,6 +80,23 @@ function autoTextValue(key) {
   }
 }
 
+// Ensure a Google Font (or any web font) is loaded into the document before
+// Fabric.js tries to render it on canvas. If the font is already present the
+// callback fires synchronously-ish; otherwise we wait up to 3 s.
+function ensureFontLoaded(fontFamily, callback) {
+  if (!fontFamily || typeof document === "undefined") { callback?.(); return; }
+  document.fonts.load(`16px "${fontFamily}"`).then(() => callback?.()).catch(() => callback?.());
+}
+
+// Pre-load all fonts listed in the selector so they're ready before first render.
+function preloadAllFonts() {
+  const sel = document.getElementById("txtFont");
+  if (!sel) return;
+  Array.from(sel.options).forEach(opt => {
+    if (opt.value) document.fonts.load(`16px "${opt.value}"`).catch(() => {});
+  });
+}
+
 function addAutoTextToArtboard(state) {
   const layout = AUTO_TEXT_LAYOUT[state.config.frame_type];
   if (!layout) return;
@@ -173,6 +190,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindBlendControls();
   bindTransformControls();
   bindTextControls();
+  preloadAllFonts();
   bindTopBar();
   bindLayersPanel();
   bindKeyboard();
@@ -1360,12 +1378,15 @@ function addText(text, overrides = {}) {
       : null,
     data: { type: "text-overlay", frameId: activeFrameId },
   };
-  const itext = new fabric.IText(text, { ...defaults, ...overrides });
-  canvas.add(itext);
-  bringOverlayToFront(state);
-  canvas.setActiveObject(itext);
-  canvas.renderAll();
-  pushUndo(); scheduleAutosave();
+  const fontFamily = defaults.fontFamily;
+  ensureFontLoaded(fontFamily, () => {
+    const itext = new fabric.IText(text, { ...defaults, ...overrides });
+    canvas.add(itext);
+    bringOverlayToFront(state);
+    canvas.setActiveObject(itext);
+    canvas.renderAll();
+    pushUndo(); scheduleAutosave();
+  });
 }
 
 function bindTextControls() {
@@ -1374,9 +1395,7 @@ function bindTextControls() {
     if (txt?.trim()) addText(txt);
   });
   document.getElementById("btnAddDate")?.addEventListener("click", () => {
-    const d = new Date();
-    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    addText(`${d.getDate()} ${mon[d.getMonth()]} ${d.getFullYear()}`, { fontSize: 48 });
+    addText(sessionDateDisplay(), { fontSize: 48 });
   });
   document.getElementById("btnAddTitle")?.addEventListener("click", () => {
     const state = ArtboardMap[activeFrameId];
@@ -1394,8 +1413,20 @@ function bindTextControls() {
     canvas.renderAll(); scheduleAutosave();
   });
 
+  // Live font preview bar
+  const _fontPreviewBar = document.getElementById("fontPreviewBar");
+  const _fontSel = document.getElementById("txtFont");
+  function updateFontPreview() {
+    if (!_fontPreviewBar || !_fontSel) return;
+    const f = _fontSel.value;
+    _fontPreviewBar.style.fontFamily = `"${f}", serif`;
+    _fontPreviewBar.title = f;
+  }
+  _fontSel?.addEventListener("change", updateFontPreview);
+  updateFontPreview(); // set on load
+
   const textProps = {
-    txtFont:        (o,v) => o.set("fontFamily",  v),
+    txtFont:        (o,v) => { o.set("fontFamily", v); ensureFontLoaded(v, () => canvas.renderAll()); },
     txtSize:        (o,v) => o.set("fontSize",    parseInt(v,10)||36),
     txtColor:       (o,v) => o.set("fill",        v),
     txtStrokeColor: (o,v) => o.set("stroke",      v),

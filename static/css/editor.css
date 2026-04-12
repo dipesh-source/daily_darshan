@@ -327,6 +327,21 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 }
 .btn-add-text:hover { background: var(--maroon-dark); }
 
+/* ── Font preview bar ─────────────────────────────────────── */
+.font-preview-bar {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--editor-hover);
+  border: 1px solid var(--editor-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--editor-text);
+  line-height: 1.5;
+  word-break: break-word;
+  min-height: 36px;
+  transition: font-family .15s;
+}
+
 /* ═══════════════════════════════════════════════════════════
    INFINITE CANVAS AREA
 ═══════════════════════════════════════════════════════════ */
