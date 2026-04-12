@@ -190,6 +190,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindBlendControls();
   bindTransformControls();
   bindTextControls();
+  bindSettingsIO();
   preloadAllFonts();
   bindTopBar();
   bindLayersPanel();
@@ -1873,6 +1874,306 @@ function scheduleAutosave() {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// SETTINGS EXPORT / IMPORT
+// Full portable JSON: all frames, text, slot filters, photos (base64)
+// ─────────────────────────────────────────────────────────────────
+
+// Convert an img element to a base64 data-URI (JPEG 92% for photos)
+function _imgElementToBase64(el) {
+  if (!el) return null;
+  try {
+    const c  = document.createElement("canvas");
+    c.width  = el.naturalWidth  || el.width  || 1;
+    c.height = el.naturalHeight || el.height || 1;
+    c.getContext("2d").drawImage(el, 0, 0);
+    return c.toDataURL("image/jpeg", 0.92);
+  } catch { return null; }
+}
+
+async function exportSettings() {
+  const overlay = document.getElementById("exportOverlay");
+  const msg     = document.getElementById("exportMsg");
+  overlay.style.display = "flex";
+  msg.textContent = "Preparing settings export…";
+  await new Promise(r => setTimeout(r, 60));
+
+  try {
+    const frames = {};
+    const allStates = Object.values(ArtboardMap);
+
+    for (let i = 0; i < allStates.length; i++) {
+      const state = allStates[i];
+      msg.textContent = `Serializing frame ${i + 1}/${allStates.length}: ${state.config.display_name}…`;
+      await new Promise(r => setTimeout(r, 20));
+
+      // Collect all non-bg objects for this frame
+      const objs = canvas.getObjects().filter(o => {
+        const d = o.data || {};
+        return d.frameId === state.frameId &&
+               !["artboard-bg", "slot-placeholder", "slot-label"].includes(d.type);
+      });
+
+      // Serialize each object; embed photos as base64 so they're portable
+      const serialized = objs.map(obj => {
+        const plain = obj.toObject(["data"]);  // no clipPath — we rebuild it on import
+        if (obj.data?.type === "slot-image" && obj._element) {
+          plain.src = _imgElementToBase64(obj._element) || plain.src;
+        }
+        return plain;
+      });
+
+      // Deep-clone slotFilters so they survive JSON round-trip
+      const slotFilters = {};
+      for (const [si, f] of Object.entries(state.slotFilters || {})) {
+        slotFilters[si] = { ...f };
+      }
+
+      frames[state.frameId] = {
+        frame_type:   state.config.frame_type,
+        display_name: state.config.display_name,
+        objects:      serialized,
+        slot_filters: slotFilters,
+      };
+    }
+
+    // Capture current text-panel UI defaults
+    const textDefaults = {
+      font:         document.getElementById("txtFont")?.value         || "Arial",
+      size:         document.getElementById("txtSize")?.value         || "60",
+      color:        document.getElementById("txtColor")?.value        || "#FFFFFF",
+      strokeColor:  document.getElementById("txtStrokeColor")?.value  || "#000000",
+      strokeW:      document.getElementById("txtStrokeW")?.value      || "2",
+      align:        document.getElementById("txtAlign")?.value        || "center",
+      bold:         document.getElementById("txtBold")?.checked       ?? true,
+      italic:       document.getElementById("txtItalic")?.checked     ?? false,
+      underline:    document.getElementById("txtUnderline")?.checked  ?? false,
+      shadow:       document.getElementById("txtShadow")?.checked     ?? true,
+    };
+
+    const pkg = {
+      version:       "2.0",
+      app:           "DailyDarshan",
+      exported_at:   new Date().toISOString(),
+      darshan_type:  window.SESSION.darshan_type,
+      darshan_date:  window.SESSION.darshan_date,
+      title:         window.SESSION.title || "",
+      text_defaults: textDefaults,
+      frames,
+    };
+
+    msg.textContent = "Writing JSON file…";
+    await new Promise(r => setTimeout(r, 20));
+
+    const blob = new Blob([JSON.stringify(pkg)], { type: "application/json" });
+    _downloadBlob(blob, `darshan_settings_${window.SESSION.darshan_date}.json`);
+    notify("✓ Settings exported — share this JSON with other users", "success");
+  } catch (err) {
+    notify("Settings export failed: " + err.message, "error");
+    console.error(err);
+  } finally {
+    overlay.style.display = "none";
+  }
+}
+
+// Upload a base64 data-URI as a server photo, returning { url, photo_id }.
+// Used during import so the session save stores a small URL, not raw base64.
+async function _uploadBase64Photo(dataUri, frameId, slotIndex, fileName) {
+  // Convert data URI → Blob → File
+  const res   = await fetch(dataUri);
+  const blob  = await res.blob();
+  const ext   = blob.type === "image/jpeg" ? "jpg" : "png";
+  const fName = fileName || `imported_${frameId}_slot${slotIndex}.${ext}`;
+  const file  = new File([blob], fName, { type: blob.type });
+
+  const fd = new FormData();
+  fd.append("photo",           file);
+  fd.append("frame_config_id", frameId);
+  fd.append("slot_index",      slotIndex);
+  const r = await apiFormPost("/api/upload/", fd);
+  return r.success ? { url: r.url, photo_id: r.photo_id } : null;
+}
+
+// Read a File as text using FileReader (works in all browsers including Safari)
+function _readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error("Could not read file"));
+    reader.readAsText(file, "UTF-8");
+  });
+}
+
+async function importSettings(file) {
+  const overlay = document.getElementById("exportOverlay");
+  const msg     = document.getElementById("exportMsg");
+  overlay.style.display = "flex";
+  msg.textContent = "Reading settings file…";
+  await new Promise(r => setTimeout(r, 40));
+
+  // ── Step 1: read and parse the file ──────────────────────────
+  let pkg;
+  try {
+    const text = await _readFileAsText(file);
+    // Quick sanity check before JSON.parse — catch HTML responses
+    if (text.trimStart().startsWith("<")) {
+      notify("Selected file is not a JSON settings file", "error");
+      overlay.style.display = "none";
+      return;
+    }
+    pkg = JSON.parse(text);
+  } catch (e) {
+    notify(`Cannot read file: ${e.message}`, "error");
+    overlay.style.display = "none";
+    return;
+  }
+
+  if (pkg.app !== "DailyDarshan" || !pkg.frames) {
+    notify("This file is not a valid DailyDarshan settings export", "error");
+    overlay.style.display = "none";
+    return;
+  }
+
+  // ── Step 2: restore each frame ───────────────────────────────
+  // Canvas restore is fully independent from the server save.
+  // We complete restore first, then silently save in background.
+  try {
+    const frameEntries = Object.entries(pkg.frames);
+
+    for (let i = 0; i < frameEntries.length; i++) {
+      const [fidStr, frameData] = frameEntries[i];
+      const fid   = parseInt(fidStr);
+      const state = ArtboardMap[fid];
+      if (!state) continue;
+
+      msg.textContent = `Restoring ${i + 1}/${frameEntries.length}: ${frameData.display_name}…`;
+      await new Promise(r => setTimeout(r, 30));
+
+      // Clear existing non-bg objects for this frame
+      canvas.getObjects()
+        .filter(o => o.data?.frameId === fid && o.data?.type !== "artboard-bg")
+        .forEach(o => canvas.remove(o));
+      state.slotImages   = {};
+      state.placeholders = [];
+      state.textObjs     = [];
+
+      // Restore slot filters
+      if (frameData.slot_filters) {
+        for (const [si, f] of Object.entries(frameData.slot_filters)) {
+          state.slotFilters[parseInt(si)] = { ...defaultFilters(), ...f };
+        }
+      }
+
+      // Upload any base64 photos to the server so the session JSON stays
+      // small (server URLs instead of raw base64 data URIs).
+      const uploadedSrcMap = {}; // slotIndex → { url, photo_id }
+      for (const obj of (frameData.objects || [])) {
+        if (obj.type === "image" && obj.data?.type === "slot-image" &&
+            typeof obj.src === "string" && obj.src.startsWith("data:")) {
+          const si = obj.data.slotIndex;
+          msg.textContent = `Uploading photo for ${frameData.display_name} slot ${si + 1}…`;
+          await new Promise(r => setTimeout(r, 20));
+          const uploaded = await _uploadBase64Photo(obj.src, fid, si, obj.data.fileName);
+          if (uploaded) {
+            uploadedSrcMap[si] = uploaded;
+            obj.src          = uploaded.url;       // replace base64 with server URL
+            obj.data.photoId = uploaded.photo_id;
+          }
+        }
+      }
+
+      // Restore canvas objects (now all srcs are server URLs)
+      await new Promise(resolve => {
+        fabric.util.enlivenObjects(frameData.objects || [], loaded => {
+          loaded.forEach(obj => {
+            canvas.add(obj);
+            const d = obj.data || {};
+            if (d.type === "slot-image") {
+              const slot = state.config.slots.find(s => s.index === d.slotIndex);
+              if (slot) {
+                state.slotImages[d.slotIndex] = obj;
+                obj.clipPath = makeSlotClip(state, slot);
+                ensureSlotImageCoverage(state, slot, obj);
+                applyFiltersToSlot(fid, d.slotIndex);
+                // Update slot panel thumbnail
+                const up = uploadedSrcMap[d.slotIndex];
+                if (up) updateSlotPanelThumb(fid, d.slotIndex, up.url);
+              }
+            }
+            if (d.type === "frame-overlay") {
+              state.overlayObj = obj;
+              obj.set({ selectable: false, evented: false });
+            }
+            if (d.type === "slot-placeholder") state.placeholders.push(obj);
+            if (d.type === "text-overlay")     state.textObjs.push(obj);
+          });
+          bringOverlayToFront(state);
+          resolve();
+        });
+      });
+
+      // Restore placeholders for slots that have no image
+      state.config.slots.forEach(slot => {
+        if (!state.slotImages[slot.index]) restorePlaceholderForSlot(state, slot.index);
+      });
+    }
+
+    canvas.renderAll();
+  } catch (err) {
+    notify("Import failed during canvas restore: " + err.message, "error");
+    console.error("Import canvas error:", err);
+    overlay.style.display = "none";
+    return;
+  }
+
+  // ── Step 3: restore text panel UI ────────────────────────────
+  if (pkg.text_defaults) {
+    try {
+      const td = pkg.text_defaults;
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value   = v; };
+      const setChk = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.checked = v; };
+      setVal("txtFont",        td.font);
+      setVal("txtSize",        td.size);
+      setVal("txtColor",       td.color);
+      setVal("txtStrokeColor", td.strokeColor);
+      setVal("txtStrokeW",     td.strokeW);
+      setVal("txtAlign",       td.align);
+      setChk("txtBold",        td.bold);
+      setChk("txtItalic",      td.italic);
+      setChk("txtUnderline",   td.underline);
+      setChk("txtShadow",      td.shadow);
+      const prev = document.getElementById("fontPreviewBar");
+      if (prev && td.font) prev.style.fontFamily = `"${td.font}", serif`;
+    } catch (_) { /* non-fatal */ }
+  }
+
+  pushUndo();
+  refreshLayersPanel();
+  renderSlotsPanel(activeFrameId);
+
+  // ── Step 4: save to server in background (non-blocking) ──────
+  overlay.style.display = "none";
+  notify(`✓ Settings imported from ${file.name} — all frames restored`, "success");
+
+  // Save silently; don't let save errors mask the successful import
+  saveSession().catch(err => {
+    console.warn("Background save after import failed:", err);
+    notify("Import OK but auto-save failed — press Ctrl+S to save manually", "info");
+  });
+}
+
+function bindSettingsIO() {
+  document.getElementById("btnSettingsExport")?.addEventListener("click", exportSettings);
+
+  const importInput = document.getElementById("settingsImportInput");
+  document.getElementById("btnSettingsImport")?.addEventListener("click", () => importInput?.click());
+  importInput?.addEventListener("change", e => {
+    const f = e.target.files?.[0];
+    if (f) importSettings(f);
+    e.target.value = ""; // reset so same file can be re-imported
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
 // KEYBOARD
 // ─────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────
@@ -1941,9 +2242,19 @@ function setActiveTool(tool) {
 // ─────────────────────────────────────────────────────────────────
 // API
 // ─────────────────────────────────────────────────────────────────
+// Safe JSON parse — if server returns HTML error page instead of JSON,
+// this returns { success: false, error: "HTTP <status>" } instead of throwing.
+async function _safeJson(r) {
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    return { success: false, error: `HTTP ${r.status}: server returned non-JSON response` };
+  }
+  try { return await r.json(); }
+  catch (e) { return { success: false, error: e.message }; }
+}
 async function apiFetch(url) {
   const r = await fetch(url, { headers: { "X-CSRFToken": csrf(), "Accept": "application/json" } });
-  return r.json();
+  return _safeJson(r);
 }
 async function apiPost(url, data) {
   const r = await fetch(url, {
@@ -1951,11 +2262,11 @@ async function apiPost(url, data) {
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
     body: JSON.stringify(data),
   });
-  return r.json();
+  return _safeJson(r);
 }
 async function apiFormPost(url, fd) {
   const r = await fetch(url, { method: "POST", headers: { "X-CSRFToken": csrf() }, body: fd });
-  return r.json();
+  return _safeJson(r);
 }
 function csrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/); return m ? m[1] : "";

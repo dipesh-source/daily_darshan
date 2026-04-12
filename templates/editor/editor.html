@@ -58,9 +58,13 @@
       </div>
       <div class="topbar-divider"></div>
       <span class="save-status" id="saveStatus"></span>
-      <button class="topbar-btn-primary"       id="btnSave"   title="Save (Ctrl+S)">Save</button>
-      <button class="topbar-btn-primary green"  id="btnExport"    title="Export active artboard (native resolution)">Export PNG</button>
-      <button class="topbar-btn-primary green"  id="btnExportAll" title="Export all frames with photos">Export All</button>
+      <button class="topbar-btn-primary"       id="btnSave"         title="Save (Ctrl+S)">Save</button>
+      <button class="topbar-btn-primary green"  id="btnExport"       title="Export active artboard (native resolution)">Export PNG</button>
+      <button class="topbar-btn-primary green"  id="btnExportAll"    title="Export all frames with photos">Export All</button>
+      <div class="topbar-divider"></div>
+      <button class="topbar-btn-primary blue"   id="btnSettingsExport" title="Export all settings + photos as JSON">⬇ Settings</button>
+      <button class="topbar-btn-primary blue"   id="btnSettingsImport" title="Import settings JSON from another user">⬆ Import</button>
+      <input type="file" id="settingsImportInput" accept=".json" style="display:none">
     </div>
   </div>
 

@@ -67,6 +67,8 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .topbar-btn-primary:hover { background: #4A4A4A; }
 .topbar-btn-primary.green { background: #1A5530; color: #7FD89A; }
 .topbar-btn-primary.green:hover { background: #226040; }
+.topbar-btn-primary.blue  { background: #0d3557; color: #64b5f6; }
+.topbar-btn-primary.blue:hover  { background: #174a73; }
 
 .save-status { font-size: 11px; color: var(--editor-muted); }
 

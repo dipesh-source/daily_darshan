@@ -138,3 +138,8 @@ MEDIA_ROOT = Path(os.environ.get("DARSHAN_MEDIA_ROOT") or (BASE_DIR / "media"))
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Allow larger request bodies for session save (canvas JSON with text overlays etc.)
+# Default is 2.5 MB — raised to 50 MB to handle multi-frame sessions.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
