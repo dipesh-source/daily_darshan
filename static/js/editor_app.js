@@ -167,7 +167,6 @@ document.addEventListener("DOMContentLoaded", () => {
   computeLayout();
   initCanvas();
   initArtboards();
-  initRulers();
   bindToolButtons();
   bindArtboardTabs();
   bindColorControls();
@@ -417,7 +416,6 @@ function loadArtboardFromJSON(state, savedJSON) {
         state.slotImages[d.slotIndex] = obj;
         const slot = state.config.slots.find(s => s.index === d.slotIndex);
         obj.clipPath = makeSlotClip(state, slot);
-        if (slot && !d.manualCrop) applyDefaultSlotImageVerticalBias(state, slot, obj);
         ensureSlotImageCoverage(state, slot, obj);
       }
       if (d.type === "frame-overlay" && d.frameId === state.frameId) {
@@ -536,19 +534,16 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
   if (!slot)  return;
 
   const s  = state.scale;
-  const sx = state.ox + slot.x * s;
-  const sy = state.oy + slot.y * s;
   const sw = slot.w * s;
   const sh = slot.h * s;
 
   fabric.Image.fromURL(imageUrl, img => {
     const { w: natW, h: natH } = imgNaturalDims(img);
     const fitScale = getRequiredSlotImageScale(sw, sh, natW, natH);
-    const initialCenter = getInitialSlotImageCenter(state, slot, fitScale, natW, natH);
 
     img.set({
-      left:     initialCenter.left,
-      top:      initialCenter.top,
+      left:     Math.round(state.ox + (slot.x + slot.w / 2) * state.scale),
+      top:      Math.round(state.oy + (slot.y + slot.h / 2) * state.scale),
       originX:  "center",
       originY:  "center",
       scaleX:   fitScale,
@@ -635,104 +630,20 @@ function imgNaturalDims(fabricImg) {
 }
 
 function ensureSlotImageCoverage(state, slot, img) {
+  // Enforce minimum scale so the image always covers the slot — no position clamping,
+  // so the user can freely pan the image to show any desired portion.
   if (!state || !slot || !img) return;
   const { w: natW, h: natH } = imgNaturalDims(img);
   if (!natW || !natH) return;
   const slotW = slot.w * state.scale;
   const slotH = slot.h * state.scale;
   const minScale = getRequiredSlotImageScale(slotW, slotH, natW, natH);
-  const nextScaleX = Math.max(Math.abs(img.scaleX || 1), minScale);
-  const nextScaleY = Math.max(Math.abs(img.scaleY || 1), minScale);
-
   img.set({
-    scaleX: nextScaleX,
-    scaleY: nextScaleY,
+    scaleX: Math.max(Math.abs(img.scaleX || 1), minScale),
+    scaleY: Math.max(Math.abs(img.scaleY || 1), minScale),
   });
-  clampSlotImagePosition(state, slot, img);
   img.setCoords();
 }
-
-function getSlotImageMovementBounds(state, slot, img) {
-  if (!state || !slot || !img) return null;
-  const slotLeft = state.ox + slot.x * state.scale;
-  const slotTop = state.oy + slot.y * state.scale;
-  const slotW = slot.w * state.scale;
-  const slotH = slot.h * state.scale;
-  const bleed = getSlotBleedPx(slotW, slotH);
-
-  img.setCoords();
-  const bounds = img.getBoundingRect();
-  const halfW = bounds.width / 2;
-  const halfH = bounds.height / 2;
-
-  return {
-    slotLeft,
-    slotTop,
-    slotW,
-    slotH,
-    bleed,
-    minLeft: slotLeft + slotW + bleed - halfW,
-    maxLeft: slotLeft - bleed + halfW,
-    minTop: slotTop + slotH + bleed - halfH,
-    maxTop: slotTop - bleed + halfH,
-  };
-}
-
-function clampSlotImagePosition(state, slot, img) {
-  const movement = getSlotImageMovementBounds(state, slot, img);
-  if (!movement) return;
-
-  if (Number.isFinite(movement.minLeft) && Number.isFinite(movement.maxLeft) && movement.minLeft <= movement.maxLeft) {
-    img.left = Math.round(clamp(img.left, movement.minLeft, movement.maxLeft));
-  }
-  if (Number.isFinite(movement.minTop) && Number.isFinite(movement.maxTop) && movement.minTop <= movement.maxTop) {
-    img.top = Math.round(clamp(img.top, movement.minTop, movement.maxTop));
-  }
-}
-
-function getInitialSlotImageCenter(state, slot, fitScale, natW, natH) {
-  const slotCenterLeft = Math.round(state.ox + (slot.x + slot.w / 2) * state.scale);
-  const slotCenterTop = Math.round(state.oy + (slot.y + slot.h / 2) * state.scale);
-  const imgProbe = new fabric.Rect({
-    left: slotCenterLeft,
-    top: slotCenterTop,
-    originX: "center",
-    originY: "center",
-    width: natW,
-    height: natH,
-    scaleX: fitScale,
-    scaleY: fitScale,
-    angle: 0,
-  });
-  const movement = getSlotImageMovementBounds(state, slot, imgProbe);
-  if (!movement) {
-    return { left: slotCenterLeft, top: slotCenterTop };
-  }
-
-  return {
-    left: slotCenterLeft,
-    top: Math.round(getDefaultSlotVerticalTop(state, slot, movement, slotCenterTop)),
-  };
-}
-
-function applyDefaultSlotImageVerticalBias(state, slot, img) {
-  const movement = getSlotImageMovementBounds(state, slot, img);
-  if (!movement) return;
-  const defaultTop = getDefaultSlotVerticalTop(state, slot, movement, img.top);
-  img.set({ top: Math.round(defaultTop) });
-}
-
-function getDefaultSlotVerticalTop(state, slot, movement, fallbackTop) {
-  const isStackedSlot = slot.h < state.config.canvas_height * 0.6;
-  if (!isStackedSlot) return fallbackTop;
-
-  const slotMidY = slot.y + slot.h / 2;
-  if (slotMidY <= state.config.canvas_height / 2) {
-    return movement.maxTop;
-  }
-  return movement.minTop;
-}
-
 function getSlotForImageObject(obj) {
   const d = obj?.data || {};
   if (d.type !== "slot-image") return null;
@@ -1685,7 +1596,6 @@ function restoreAll(snapStr) {
           const slot = state.config.slots.find(s => s.index === d.slotIndex);
           state.slotImages[d.slotIndex] = obj;
           obj.clipPath = makeSlotClip(state, slot);
-          if (slot && !d.manualCrop) applyDefaultSlotImageVerticalBias(state, slot, obj);
           ensureSlotImageCoverage(state, slot, obj);
         }
         if (d.type === "frame-overlay") { state.overlayObj = obj; obj.set({selectable:false,evented:false}); }
@@ -1967,140 +1877,6 @@ function csrf() {
   const m = document.cookie.match(/csrftoken=([^;]+)/); return m ? m[1] : "";
 }
 
-// GRID + RULERS — drawn directly on Fabric's canvas via after:render
-const RULER_SIZE = 20;
-let gridVisible = true;
-let _gMouseX = -1, _gMouseY = -1, _gRafPending = false;
-
-function initRulers() {
-  canvas.on("mouse:move", opt => {
-    _gMouseX = opt.e.offsetX; _gMouseY = opt.e.offsetY;
-    if (!_gRafPending) {
-      _gRafPending = true;
-      requestAnimationFrame(() => { _gRafPending = false; canvas.requestRenderAll(); });
-    }
-  });
-  canvas.on("mouse:out", () => { _gMouseX = -1; _gMouseY = -1; canvas.requestRenderAll(); });
-  canvas.on("after:render", _drawGridAndRulers);
-  document.getElementById("btnToggleGrid")?.addEventListener("click", () => {
-    gridVisible = !gridVisible;
-    document.getElementById("btnToggleGrid").classList.toggle("active", gridVisible);
-    canvas.requestRenderAll();
-  });
-}
-
-function _gridStep(zoom) {
-  const target = 80 / zoom;
-  const exp = Math.floor(Math.log10(target));
-  const frac = target / Math.pow(10, exp);
-  const nice = frac < 1.5 ? 1 : frac < 3.5 ? 2 : frac < 7.5 ? 5 : 10;
-  return nice * Math.pow(10, exp);
-}
-function _rulerLabel(px) {
-  if (Math.abs(px) >= 1000) return (px/1000).toFixed(1) + "k";
-  return Math.round(px) + "";
-}
-
-function _drawGridAndRulers() {
-  const ctx = canvas.lowerCanvasEl.getContext("2d");
-  const vpt = canvas.viewportTransform;
-  if (!ctx || !vpt) return;
-  const zoom = vpt[0], tx = vpt[4], ty = vpt[5];
-  const W = canvas.lowerCanvasEl.width, H = canvas.lowerCanvasEl.height;
-  const R = RULER_SIZE;
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const step = _gridStep(zoom), subStep = step / 4;
-  const wx0 = (R-tx)/zoom, wx1 = (W-tx)/zoom;
-  const wy0 = (R-ty)/zoom, wy1 = (H-ty)/zoom;
-  // Minor grid
-  if (gridVisible) {
-    ctx.strokeStyle = "rgba(255,255,255,0.04)"; ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    for (let wx = Math.ceil(wx0/subStep)*subStep; wx<=wx1; wx+=subStep) {
-      if (Math.abs(((wx/step)%1+1)%1) < 0.001) continue;
-      const sx = Math.round(wx*zoom+tx)+0.5; ctx.moveTo(sx,R); ctx.lineTo(sx,H);
-    }
-    for (let wy = Math.ceil(wy0/subStep)*subStep; wy<=wy1; wy+=subStep) {
-      if (Math.abs(((wy/step)%1+1)%1) < 0.001) continue;
-      const sy = Math.round(wy*zoom+ty)+0.5; ctx.moveTo(R,sy); ctx.lineTo(W,sy);
-    }
-    ctx.stroke();
-    // Major grid
-    ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    for (let wx=Math.ceil(wx0/step)*step; wx<=wx1; wx+=step) {
-      const sx=Math.round(wx*zoom+tx)+0.5; ctx.moveTo(sx,R); ctx.lineTo(sx,H);
-    }
-    for (let wy=Math.ceil(wy0/step)*step; wy<=wy1; wy+=step) {
-      const sy=Math.round(wy*zoom+ty)+0.5; ctx.moveTo(R,sy); ctx.lineTo(W,sy);
-    }
-    ctx.stroke();
-  }
-  // Cursor crosshair
-  if (_gMouseX >= R && _gMouseY >= R) {
-    ctx.strokeStyle="rgba(232,133,90,0.55)"; ctx.lineWidth=0.5; ctx.setLineDash([4,4]);
-    ctx.beginPath();
-    ctx.moveTo(_gMouseX+0.5,R); ctx.lineTo(_gMouseX+0.5,H);
-    ctx.moveTo(R,_gMouseY+0.5); ctx.lineTo(W,_gMouseY+0.5);
-    ctx.stroke(); ctx.setLineDash([]);
-  }
-  // Ruler backgrounds
-  ctx.fillStyle="#1c1c1c";
-  ctx.fillRect(0,0,W,R); ctx.fillRect(0,R,R,H-R);
-  ctx.fillStyle="#222"; ctx.fillRect(0,0,R,R);
-  ctx.strokeStyle="#383838"; ctx.lineWidth=1;
-  ctx.beginPath();
-  ctx.moveTo(0,R-0.5); ctx.lineTo(W,R-0.5);
-  ctx.moveTo(R-0.5,R); ctx.lineTo(R-0.5,H);
-  ctx.stroke();
-  // Ticks and labels
-  const TICK="#555", TICKM="#383838", LBL="#777", CARET="#e8855a";
-  const sxf = wx => Math.round(wx*zoom+tx)+0.5;
-  const syf = wy => Math.round(wy*zoom+ty)+0.5;
-  ctx.strokeStyle=TICKM; ctx.lineWidth=1; ctx.beginPath();
-  for (let wx=Math.ceil(wx0/subStep)*subStep; wx<=wx1; wx+=subStep) {
-    if (Math.abs(((wx/step)%1+1)%1)<0.001) continue;
-    const x=sxf(wx); if(x<R||x>W) continue;
-    ctx.moveTo(x,R*0.65); ctx.lineTo(x,R-0.5);
-  }
-  for (let wy=Math.ceil(wy0/subStep)*subStep; wy<=wy1; wy+=subStep) {
-    if (Math.abs(((wy/step)%1+1)%1)<0.001) continue;
-    const y=syf(wy); if(y<R||y>H) continue;
-    ctx.moveTo(R*0.65,y); ctx.lineTo(R-0.5,y);
-  }
-  ctx.stroke();
-  ctx.font="9px system-ui,sans-serif"; ctx.textBaseline="top"; ctx.textAlign="left";
-  for (let wx=Math.ceil(wx0/step)*step; wx<=wx1; wx+=step) {
-    const x=sxf(wx); if(x<R||x>W) continue;
-    ctx.strokeStyle=TICK; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(x,R*0.25); ctx.lineTo(x,R-0.5); ctx.stroke();
-    ctx.fillStyle=LBL; ctx.fillText(_rulerLabel(wx),Math.min(x+2,W-30),3);
-  }
-  for (let wy=Math.ceil(wy0/step)*step; wy<=wy1; wy+=step) {
-    const y=syf(wy); if(y<R||y>H) continue;
-    ctx.strokeStyle=TICK; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(R*0.25,y); ctx.lineTo(R-0.5,y); ctx.stroke();
-    ctx.save(); ctx.translate(R-3,Math.min(y-2,H-4)); ctx.rotate(-Math.PI/2);
-    ctx.font="9px system-ui,sans-serif"; ctx.textBaseline="bottom"; ctx.textAlign="left";
-    ctx.fillStyle=LBL; ctx.fillText(_rulerLabel(wy),0,0); ctx.restore();
-  }
-  // Cursor indicators on ruler
-  if (_gMouseX >= R) {
-    ctx.fillStyle=CARET;
-    ctx.fillRect(_gMouseX-0.5,0,1,R-1);
-    ctx.font="bold 9px system-ui,sans-serif"; ctx.textBaseline="top"; ctx.textAlign="left";
-    ctx.fillText(Math.round((_gMouseX-tx)/zoom)+"px",Math.min(_gMouseX+3,W-40),3);
-  }
-  if (_gMouseY >= R) {
-    ctx.fillStyle=CARET; ctx.fillRect(0,_gMouseY-0.5,R-1,1);
-    ctx.save(); ctx.translate(R-3,Math.min(_gMouseY+20,H-4)); ctx.rotate(-Math.PI/2);
-    ctx.font="bold 9px system-ui,sans-serif"; ctx.textBaseline="bottom"; ctx.textAlign="left";
-    ctx.fillStyle=CARET; ctx.fillText(Math.round((_gMouseY-ty)/zoom)+"px",0,0); ctx.restore();
-  }
-  ctx.restore();
-}
-
 
 // ─────────────────────────────────────────────────────────────────
 // ADJUSTMENT HUD — real-time % readout while moving/scaling images
@@ -2150,11 +1926,10 @@ function updateHud(obj) {
   let hudX = scrX + 14;
   let hudY = scrY - 36;
   if (hudX + hudW > area.clientWidth  - 8) hudX = scrX - hudW - 14;
-  // Don't overlap the horizontal ruler (top 20px)
-  if (hudY < RULER_SIZE + 4) hudY = scrY + 14;
+  if (hudY < 8) hudY = scrY + 14;
 
-  hud.style.left    = Math.max(RULER_SIZE + 4, hudX) + "px";
-  hud.style.top     = Math.max(RULER_SIZE + 4, hudY) + "px";
+  hud.style.left    = Math.max(8, hudX) + "px";
+  hud.style.top     = Math.max(8, hudY) + "px";
   hud.style.display = "block";
 
   hud.innerHTML =
