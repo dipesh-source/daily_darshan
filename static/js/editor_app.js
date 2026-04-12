@@ -486,41 +486,55 @@ function bringOverlayToFront(state) {
 // SLOT SYNC  — upload to one tall-portrait slot → mirrors to all
 //             equivalent tall slots in the same darshan session.
 //
-// Sync groups (frame_type → slot_index):
-//   full/0  ↔  3in1_l/0  ↔  3in1_r/2
+// Sync groups — each group is an array of { frame_type, slotIndex } members.
+// When a photo is loaded into any slot in a group, it mirrors to all other
+// members of the same group within the same darshan_type.
 //
-// This covers Mangala, Shanagar (excl. left/center/right), Shayan.
-// Wide is intentionally excluded (landscape, different composition).
-// Small stacked slots in 3-in-1 (slot 1 & 2 of L, slot 0 & 1 of R)
-// are also excluded — those get individual photos.
+//  Group 0 — tall portrait   : full/0  ↔  3in1_l/0  ↔  3in1_r/2
+//  Group 1 — top small pair  : 3in1_l/1  ↔  3in1_r/0
+//  Group 2 — bottom small pair: 3in1_l/2  ↔  3in1_r/1
 // ─────────────────────────────────────────────────────────────────
-const SYNC_MEMBERS = [
-  { frame_type: "full",    slotIndex: 0 },
-  { frame_type: "3in1_l",  slotIndex: 0 },
-  { frame_type: "3in1_r",  slotIndex: 2 },
+const SYNC_GROUPS = [
+  // Tall portrait (full frame + tall slot in 3-in-1 L + R)
+  [
+    { frame_type: "full",   slotIndex: 0 },
+    { frame_type: "3in1_l", slotIndex: 0 },
+    { frame_type: "3in1_r", slotIndex: 2 },
+  ],
+  // Top small — 3in1_L top-right  ↔  3in1_R top-left
+  [
+    { frame_type: "3in1_l", slotIndex: 1 },
+    { frame_type: "3in1_r", slotIndex: 0 },
+  ],
+  // Bottom small — 3in1_L bottom-right  ↔  3in1_R bottom-left
+  [
+    { frame_type: "3in1_l", slotIndex: 2 },
+    { frame_type: "3in1_r", slotIndex: 1 },
+  ],
 ];
 
 function getSyncTargets(sourceFrameId, sourceSlotIndex) {
   const src = ArtboardMap[sourceFrameId];
   if (!src) return [];
 
-  // Is this slot a sync member?
-  const isMember = SYNC_MEMBERS.some(
-    m => m.frame_type === src.config.frame_type && m.slotIndex === sourceSlotIndex
+  // Find which group this slot belongs to
+  const group = SYNC_GROUPS.find(g =>
+    g.some(m => m.frame_type === src.config.frame_type && m.slotIndex === sourceSlotIndex)
   );
-  if (!isMember) return [];
+  if (!group) return [];
 
-  // Find all other artboards in the same darshan that are also sync members
-  return Object.values(ArtboardMap).filter(state => {
-    if (state.frameId === sourceFrameId) return false;
-    if (state.config.darshan_type !== src.config.darshan_type) return false;
-    return SYNC_MEMBERS.some(
-      m => m.frame_type === state.config.frame_type && state.config.slots.some(s => s.index === m.slotIndex)
+  // Return all other artboards in the same darshan that match another member of this group
+  const targets = [];
+  for (const state of Object.values(ArtboardMap)) {
+    if (state.frameId === sourceFrameId) continue;
+    if (state.config.darshan_type !== src.config.darshan_type) continue;
+    const member = group.find(
+      m => m.frame_type === state.config.frame_type &&
+           state.config.slots.some(s => s.index === m.slotIndex)
     );
-  }).map(state => {
-    const member = SYNC_MEMBERS.find(m => m.frame_type === state.config.frame_type);
-    return { frameId: state.frameId, slotIndex: member.slotIndex };
-  });
+    if (member) targets.push({ frameId: state.frameId, slotIndex: member.slotIndex });
+  }
+  return targets;
 }
 
 // ─────────────────────────────────────────────────────────────────
