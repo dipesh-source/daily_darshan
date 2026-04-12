@@ -1467,7 +1467,8 @@ function bindTopBar() {
   document.getElementById("btnRedo")?.addEventListener("click",   redo);
   document.getElementById("btnZoomIn")?.addEventListener("click",  () => adjustZoom(1.2));
   document.getElementById("btnZoomOut")?.addEventListener("click", () => adjustZoom(1/1.2));
-  document.getElementById("btnFitAll")?.addEventListener("click",  fitAll);
+  document.getElementById("btnFitAll")?.addEventListener("click",    fitAll);
+  document.getElementById("btnFocusFrame")?.addEventListener("click", focusActiveFrame);
   document.getElementById("btnDeleteSelected")?.addEventListener("click", () => {
     const obj = canvas.getActiveObject();
     if (!obj) return;
@@ -1534,6 +1535,11 @@ function fitAll() {
   canvas.viewportTransform[5] = viewH / 2 - cy * zoom;
   canvas.requestRenderAll();
   updateZoomDisplay(); updateLabelPositions();
+}
+// Jump to and fit the currently active frame (Ctrl/Cmd+0)
+function focusActiveFrame() {
+  if (!activeFrameId) return;
+  scrollToArtboard(activeFrameId);
 }
 function updateZoomDisplay() {
   const el = document.getElementById("zoomDisplay");
@@ -1820,6 +1826,7 @@ function bindKeyboard() {
       if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
       if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); return; }
       if (e.key === "s") { e.preventDefault(); saveSession(); return; }
+      if (e.key === "0") { e.preventDefault(); focusActiveFrame(); return; }
     }
     if (e.key === "Delete" || e.key === "Backspace") {
       const obj = canvas.getActiveObject();
