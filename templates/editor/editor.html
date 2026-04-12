@@ -70,15 +70,24 @@
 
       <!-- Tool strip -->
       <div class="tool-strip">
-        <button class="tool-btn active" data-tool="select" title="Select (V)">
-          <svg viewBox="0 0 24 24"><path d="M4 4l7 18 3-7 7-3z" fill="currentColor"/></svg>
-        </button>
-        <button class="tool-btn" data-tool="hand" title="Pan canvas (H)">
-          <svg viewBox="0 0 24 24"><path d="M9 11V6a2 2 0 014 0v4m0 0v-1a2 2 0 014 0v5a7 7 0 01-14 0V9a2 2 0 014 0v2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
-        </button>
-        <button class="tool-btn" data-tool="text" title="Add Text (T)">
-          <svg viewBox="0 0 24 24"><text x="4" y="18" font-size="16" fill="currentColor" font-family="serif">T</text></svg>
-        </button>
+        <div class="tool-wrap">
+          <button class="tool-btn active" data-tool="select">
+            <svg viewBox="0 0 24 24"><path d="M4 4l7 18 3-7 7-3z" fill="currentColor"/></svg>
+          </button>
+          <div class="tool-tooltip">Select<kbd>V</kbd></div>
+        </div>
+        <div class="tool-wrap">
+          <button class="tool-btn" data-tool="hand">
+            <svg viewBox="0 0 24 24"><path d="M9 11V6a2 2 0 014 0v4m0 0v-1a2 2 0 014 0v5a7 7 0 01-14 0V9a2 2 0 014 0v2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+          </button>
+          <div class="tool-tooltip">Hand<kbd>H</kbd></div>
+        </div>
+        <div class="tool-wrap">
+          <button class="tool-btn" data-tool="text">
+            <svg viewBox="0 0 24 24"><text x="4" y="18" font-size="16" fill="currentColor" font-family="serif">T</text></svg>
+          </button>
+          <div class="tool-tooltip">Text<kbd>T</kbd></div>
+        </div>
       </div>
 
       <!-- Artboard switcher -->
