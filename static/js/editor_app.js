@@ -1752,36 +1752,68 @@ async function exportAll() {
   const overlay = document.getElementById("exportOverlay");
   const msg     = document.getElementById("exportMsg");
   overlay.style.display = "flex";
-  msg.textContent = `Preparing bulk export — ${toExport.length} frames…`;
 
+  // ── Step 1: render all frames to blobs ───────────────────────
+  msg.textContent = `Rendering ${toExport.length} frames…`;
   await new Promise(r => setTimeout(r, 60));
 
+  const rendered = [];
   try {
-    const zip = new JSZip();
-    const date = window.SESSION?.darshan_date || "export";
-    const folder = zip.folder(`darshan_${date}`);
-
     for (let i = 0; i < toExport.length; i++) {
       const state = toExport[i];
       msg.textContent = `Rendering ${i + 1} / ${toExport.length}: ${state.config.display_name}…`;
-      await new Promise(r => setTimeout(r, 30)); // let DOM update
-
+      await new Promise(r => setTimeout(r, 30));
       const dataURL = _captureArtboard(state);
-      // Strip the data:image/png;base64, prefix — JSZip wants raw base64
-      const b64 = dataURL.split(",")[1];
-      folder.file(_exportFilename(state), b64, { base64: true });
+      const blob    = await (await fetch(dataURL)).blob();
+      rendered.push({ blob, filename: _exportFilename(state), name: state.config.display_name });
     }
+  } catch (err) {
+    notify("Render failed: " + err.message, "error");
+    overlay.style.display = "none";
+    return;
+  }
 
-    msg.textContent = `Compressing ZIP…`;
-    await new Promise(r => setTimeout(r, 30));
+  // ── Step 2: pick a folder once, save all files silently ──────
+  // File System Access API: supported in Chrome 86+, Edge 86+, Safari 15.2+
+  if (window.showDirectoryPicker) {
+    try {
+      msg.textContent = "Pick a folder — all images will save there automatically…";
+      const dirHandle = await window.showDirectoryPicker({ mode: "readwrite", startIn: "downloads" });
 
-    const zipBlob = await zip.generateAsync({
-      type:               "blob",
-      compression:        "STORE",   // STORE = no compression, fastest & lossless
-      compressionOptions: { level: 0 },
-    });
-    _downloadBlob(zipBlob, `darshan_${date}.zip`);
-    notify(`✓ Bulk export: ${toExport.length} frames zipped and downloading`, "success");
+      for (let i = 0; i < rendered.length; i++) {
+        const { blob, filename, name } = rendered[i];
+        msg.textContent = `Saving ${i + 1} / ${rendered.length}: ${name}…`;
+        await new Promise(r => setTimeout(r, 20));
+        const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+        const writable   = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      }
+      overlay.style.display = "none";
+      notify(`✓ All ${rendered.length} PNGs saved to the selected folder`, "success");
+      return;
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        notify("Save failed: " + err.message, "error");
+        overlay.style.display = "none";
+        return;
+      }
+      // User cancelled the folder picker — fall through to sequential downloads
+    }
+  }
+
+  // ── Fallback: sequential individual downloads ────────────────
+  // Chrome/Edge will prompt once "allow multiple downloads" then save all.
+  // Safari will save each to Downloads automatically without prompting.
+  try {
+    msg.textContent = `Downloading ${rendered.length} PNG files…`;
+    for (let i = 0; i < rendered.length; i++) {
+      const { blob, filename, name } = rendered[i];
+      msg.textContent = `Downloading ${i + 1} / ${rendered.length}: ${name}…`;
+      _downloadBlob(blob, filename);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    notify(`✓ Exported ${rendered.length} PNG files`, "success");
   } catch (err) {
     notify("Bulk export failed: " + err.message, "error");
     console.error("Bulk export error:", err);
