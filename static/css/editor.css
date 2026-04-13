@@ -713,3 +713,96 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
   background: var(--editor-accent); color: #1a1a1a;
 }
 .tour-btn-next:hover { background: #c8920f; }
+
+/* ── Guide panel ──────────────────────────────────────────────── */
+.panel-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--editor-accent);
+  color: #1a1a1a; font-size: 10px; font-weight: 700;
+  margin-left: 6px; vertical-align: middle;
+}
+.guide-toolbar {
+  display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.guide-ctrl-btn {
+  flex: 1; min-width: 0;
+  padding: 4px 6px; font-size: 10px; font-weight: 600;
+  border-radius: 4px; border: 1px solid var(--editor-border);
+  background: var(--editor-hover); color: var(--editor-muted);
+  cursor: pointer; transition: all .12s; white-space: nowrap;
+}
+.guide-ctrl-btn.active {
+  background: rgba(0, 200, 255, 0.15);
+  border-color: rgba(0, 200, 255, 0.5);
+  color: #00e5ff;
+}
+.guide-ctrl-btn:hover { border-color: #00e5ff; color: #00e5ff; }
+
+.guide-slot-group { margin-bottom: 8px; }
+.guide-slot-label {
+  font-size: 10px; font-weight: 700; color: var(--editor-muted);
+  text-transform: uppercase; letter-spacing: .05em;
+  margin-bottom: 4px; padding-left: 2px;
+}
+.guide-item {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 0;
+}
+.gax {
+  width: 18px; height: 18px; border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; flex-shrink: 0;
+}
+.gax-v { background: rgba(0,200,255,.2); color: #00e5ff; border: 1px solid rgba(0,200,255,.4); }
+.gax-h { background: rgba(255,200,60,.2); color: #ffd43b; border: 1px solid rgba(255,200,60,.4); }
+.gpx {
+  width: 56px; padding: 3px 5px; font-size: 11px;
+  background: var(--editor-hover); border: 1px solid var(--editor-border);
+  border-radius: 4px; color: var(--editor-text);
+  text-align: right;
+}
+.gpx:focus { border-color: #00e5ff; outline: none; }
+.gpct {
+  font-size: 10px; color: var(--editor-muted); min-width: 30px;
+}
+.gdel {
+  margin-left: auto; width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; border-radius: 3px; flex-shrink: 0;
+  background: transparent; color: var(--editor-muted);
+  cursor: pointer; transition: all .12s;
+}
+.gdel:hover { background: rgba(255,30,68,.2); color: #ff1744; }
+
+.guide-add-btns {
+  display: flex; gap: 4px; margin-top: 4px;
+}
+.gadd {
+  flex: 1; padding: 3px 0; font-size: 10px; font-weight: 600;
+  border: 1px dashed var(--editor-border); border-radius: 4px;
+  background: transparent; color: var(--editor-muted); cursor: pointer;
+  transition: all .12s;
+}
+.gadd:hover { border-color: #00e5ff; color: #00e5ff; background: rgba(0,200,255,.08); }
+
+/* ── Guide context menu ───────────────────────────────────────── */
+.guide-ctx-menu {
+  position: fixed; display: none;
+  background: #1e1e1e; border: 1px solid #444; border-radius: 7px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.6); z-index: 99998;
+  min-width: 200px; overflow: hidden;
+}
+.gcm-title {
+  padding: 8px 12px; font-size: 10px; font-weight: 700;
+  color: #00e5ff; background: rgba(0,200,255,.08);
+  border-bottom: 1px solid #333; letter-spacing: .04em;
+}
+.gcm-item {
+  padding: 7px 14px; font-size: 12px; color: var(--editor-text);
+  cursor: pointer; transition: background .1s;
+}
+.gcm-item:hover { background: var(--editor-hover); }
+.gcm-del { color: #ff6b6b; }
+.gcm-del:hover { background: rgba(255,30,68,.12); }
+.gcm-sep { height: 1px; background: #333; margin: 3px 0; }

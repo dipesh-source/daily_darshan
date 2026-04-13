@@ -200,6 +200,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAutoTextSync();
   initGlobalTooltip();
   initGuideDrag();
+  bindGuidePanel();
   activateArtboard(window.ARTBOARDS[0].id);
   renderArtboardListPanel();
   // Fit all artboards into view on startup
@@ -282,13 +283,13 @@ function initCanvas() {
   canvas.on("object:added",      () => refreshLayersPanel());
   canvas.on("object:removed",    () => refreshLayersPanel());
 
-  // ── Per-slot center crosshair guides (drawn after every render) ──
+  // ── Per-slot guides drawn on a separate overlay canvas ────────
   canvas.on("after:render", _drawSlotCenterGuides);
 
-  // ── Smart snap guides (appear while dragging) ─────────────────
-  canvas.on("object:moving", _onObjectMoving);
-  canvas.on("object:modified", () => { _smartGuides = []; canvas.renderAll(); });
-  canvas.on("mouse:up", () => { _smartGuides = []; });
+  // ── Smart snap + distance lines while dragging a photo ────────
+  canvas.on("object:moving",  _onObjectMoving);
+  canvas.on("object:modified", () => { _smartGuides = []; _isDraggingPhoto = false; canvas.renderAll(); });
+  canvas.on("mouse:up",        () => { _smartGuides = []; _isDraggingPhoto = false; canvas.renderAll(); });
 
   // Artboard background rects (drawn first so they sit below everything)
   Object.values(ArtboardMap).forEach(ab => {
@@ -811,6 +812,7 @@ function activateArtboard(frameId) {
 
   updateLabelPositions();
   renderSlotsPanel(frameId);
+  _renderGuidePanel();
   renderActiveFrameInfo(frameId);
   refreshLayersPanel();
 }
@@ -875,6 +877,7 @@ function updateSlotPanelThumb(frameId, slotIndex, imageUrl) {
   thumb.classList.add("has-image");
   // Re-render the panel to add the clear button
   renderSlotsPanel(frameId);
+  _renderGuidePanel();
 }
 
 function ensureFileInputs(frameId, slots) {
@@ -1468,252 +1471,539 @@ function bindTextControls() {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────
-// SLOT GUIDES — draggable crosshairs + smart snap
-// ─────────────────────────────────────────────────────────────────
-// Colors
-const GUIDE_CENTER_C    = "rgba(0, 180, 255, 0.60)";  // cyan  — idle
-const GUIDE_ACTIVE_C    = "rgba(0, 220, 255, 1.0)";   // bright cyan — being dragged
-const GUIDE_SNAP_C      = "#e040fb";                   // magenta — snap
-const GUIDE_SNAP_EDGE_C = "#ff1744";                   // red    — edge snap
-const SNAP_THRESH       = 8;   // px to trigger snap
-const GUIDE_HIT_THRESH  = 7;   // px to start dragging a guide
+// ═════════════════════════════════════════════════════════════════
+// SLOT GUIDES  –  multi-guide · draggable · rule-of-thirds · snap
+//   • Drawn on a separate overlay <canvas> (never touches Fabric's
+//     upper canvas so selection handles stay intact).
+//   • Drag any guide to reposition; double-click to reset to centre;
+//     right-click for context menu (delete / mirror / duplicate).
+//   • Rule-of-thirds toggle (Shift+R), guides toggle (G), snap (S).
+//   • Photo-centre crosshair + live distance labels while dragging.
+// ═════════════════════════════════════════════════════════════════
 
-// Per-slot guide positions stored as fractions of slot W/H (0 = start, 1 = end).
-// Default {vFrac:0.5, hFrac:0.5} = dead centre.
-const _guidePos = {};  // key: "frameId:slotIndex"
+// ── colours ────────────────────────────────────────────────────
+const GUIDE_IDLE_C      = "rgba(0, 200, 255, 0.65)";
+const GUIDE_ACTIVE_C    = "#00e5ff";
+const GUIDE_THIRDS_C    = "rgba(255, 210, 60, 0.50)";
+const GUIDE_SNAP_C      = "#e040fb";
+const GUIDE_SNAP_EDGE_C = "#ff1744";
+const GUIDE_DIST_C      = "rgba(255, 160, 30, 0.90)";
+const SNAP_THRESH       = 8;
+const GUIDE_HIT_THRESH  = 7;
 
-function _guideKey(frameId, slotIndex) { return `${frameId}:${slotIndex}`; }
-function _getGuidePos(frameId, slotIndex) {
+// ── per-slot guide list ─────────────────────────────────────────
+// _slotGuides["frameId:slotIndex"] = [{ id, axis:"v"|"h", frac }]
+const _slotGuides = {};
+let _guidesVisible   = true;
+let _thirdsVisible   = false;
+let _snapEnabled     = true;
+let _draggingGuide   = null;   // { state, slot, guide }
+let _smartGuides     = [];
+let _isDraggingPhoto = false;
+let _guideSeq        = 0;
+
+function _newGid()              { return `g${++_guideSeq}`; }
+function _guideKey(fId, sIdx)   { return `${fId}:${sIdx}`; }
+
+function _getGuides(frameId, slotIndex) {
   const k = _guideKey(frameId, slotIndex);
-  if (!_guidePos[k]) _guidePos[k] = { vFrac: 0.5, hFrac: 0.5 };
-  return _guidePos[k];
+  if (!_slotGuides[k]) {
+    _slotGuides[k] = [
+      { id: _newGid(), axis: "v", frac: 0.5 },
+      { id: _newGid(), axis: "h", frac: 0.5 },
+    ];
+  }
+  return _slotGuides[k];
 }
 
-// Accumulated smart snap guides from the current photo drag
-let _smartGuides  = [];
-// Currently-dragged guide: { state, slot, axis:"v"|"h" } or null
-let _draggingGuide = null;
+function _addGuide(frameId, slotIndex, axis, frac) {
+  if (frac === undefined) frac = 0.5;
+  _getGuides(frameId, slotIndex).push({ id: _newGid(), axis, frac });
+  _renderGuidePanel();
+  canvas.renderAll();
+}
 
-// Convert a slot's world-space rect → screen-space coordinates
+function _deleteGuide(frameId, slotIndex, gid) {
+  const k = _guideKey(frameId, slotIndex);
+  if (_slotGuides[k]) _slotGuides[k] = _slotGuides[k].filter(function(g){ return g.id !== gid; });
+  _renderGuidePanel();
+  canvas.renderAll();
+}
+
+// native-px <-> fraction helpers
+function _fracToPx(frac, dim)   { return Math.round(frac * dim); }
+function _pxToFrac(px, dim)     { return Math.max(0.005, Math.min(0.995, px / dim)); }
+
+// ── slot world -> screen ────────────────────────────────────────
 function _slotScreenRect(state, slot) {
-  const [zoom, , , , tx, ty] = canvas.viewportTransform;
+  const vpt  = canvas.viewportTransform;
+  const zoom = vpt[0], tx = vpt[4], ty = vpt[5];
   const s = state.scale;
-  const L  = (state.ox + slot.x * s) * zoom + tx;
-  const T  = (state.oy + slot.y * s) * zoom + ty;
-  const R  = L + slot.w * s * zoom;
-  const B  = T + slot.h * s * zoom;
-  return { L, T, R, B };
+  const L = (state.ox + slot.x * s) * zoom + tx;
+  const T = (state.oy + slot.y * s) * zoom + ty;
+  const R = L + slot.w * s * zoom;
+  const B = T + slot.h * s * zoom;
+  return { L: L, T: T, R: R, B: B };
 }
 
-// Hit-test (screen px) → { state, slot, axis } or null
+// ── hit-test all guides ─────────────────────────────────────────
 function _hitTestGuide(sx, sy) {
-  for (const state of Object.values(ArtboardMap)) {
-    for (const slot of (state.config.slots || [])) {
+  if (!_guidesVisible) return null;
+  var states = Object.values(ArtboardMap);
+  for (var si = 0; si < states.length; si++) {
+    var state = states[si];
+    var slots = state.config.slots || [];
+    for (var qi = 0; qi < slots.length; qi++) {
+      var slot = slots[qi];
       if (!state.slotImages[slot.index]) continue;
-      const { L, T, R, B } = _slotScreenRect(state, slot);
-      // Coarse bounding box check first
-      if (sx < L - GUIDE_HIT_THRESH || sx > R + GUIDE_HIT_THRESH) continue;
-      if (sy < T - GUIDE_HIT_THRESH || sy > B + GUIDE_HIT_THRESH) continue;
-
-      const pos = _getGuidePos(state.frameId, slot.index);
-      const vx  = L + (R - L) * pos.vFrac;
-      const hy  = T + (B - T) * pos.hFrac;
-
-      // Vertical guide: sx close to vx, sy inside slot
-      if (Math.abs(sx - vx) <= GUIDE_HIT_THRESH && sy >= T - 2 && sy <= B + 2) {
-        return { state, slot, axis: "v" };
-      }
-      // Horizontal guide: sy close to hy, sx inside slot
-      if (Math.abs(sy - hy) <= GUIDE_HIT_THRESH && sx >= L - 2 && sx <= R + 2) {
-        return { state, slot, axis: "h" };
+      var r = _slotScreenRect(state, slot);
+      if (sx < r.L - GUIDE_HIT_THRESH || sx > r.R + GUIDE_HIT_THRESH) continue;
+      if (sy < r.T - GUIDE_HIT_THRESH || sy > r.B + GUIDE_HIT_THRESH) continue;
+      var guides = _getGuides(state.frameId, slot.index);
+      for (var gi = guides.length - 1; gi >= 0; gi--) {
+        var g  = guides[gi];
+        var gp = g.axis === "v" ? r.L + (r.R - r.L) * g.frac : r.T + (r.B - r.T) * g.frac;
+        var inBand = g.axis === "v"
+          ? (Math.abs(sx - gp) <= GUIDE_HIT_THRESH && sy >= r.T - 2 && sy <= r.B + 2)
+          : (Math.abs(sy - gp) <= GUIDE_HIT_THRESH && sx >= r.L - 2 && sx <= r.R + 2);
+        if (inBand) return { state: state, slot: slot, guide: g };
       }
     }
   }
   return null;
 }
 
-// Draw all guides onto the upper canvas overlay
-function _drawSlotCenterGuides() {
-  const ctx = canvas.upperCanvasEl.getContext("2d");
-  const W   = canvas.upperCanvasEl.width;
-  const H   = canvas.upperCanvasEl.height;
-  ctx.clearRect(0, 0, W, H);
+// ── overlay canvas ──────────────────────────────────────────────
+var _guideOvCanvas = null;
 
-  Object.values(ArtboardMap).forEach(state => {
-    (state.config.slots || []).forEach(slot => {
-      if (!state.slotImages[slot.index]) return;
-
-      const { L, T, R, B } = _slotScreenRect(state, slot);
-      const pos = _getGuidePos(state.frameId, slot.index);
-      const vx  = L + (R - L) * pos.vFrac;
-      const hy  = T + (B - T) * pos.hFrac;
-
-      const dragV = _draggingGuide &&
-        _draggingGuide.state === state &&
-        _draggingGuide.slot  === slot  &&
-        _draggingGuide.axis  === "v";
-      const dragH = _draggingGuide &&
-        _draggingGuide.state === state &&
-        _draggingGuide.slot  === slot  &&
-        _draggingGuide.axis  === "h";
-
-      ctx.save();
-      ctx.setLineDash([5, 4]);
-
-      // ── Vertical guide ──
-      ctx.strokeStyle = dragV ? GUIDE_ACTIVE_C : GUIDE_CENTER_C;
-      ctx.lineWidth   = dragV ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(vx, T);
-      ctx.lineTo(vx, B);
-      ctx.stroke();
-
-      // ── Horizontal guide ──
-      ctx.strokeStyle = dragH ? GUIDE_ACTIVE_C : GUIDE_CENTER_C;
-      ctx.lineWidth   = dragH ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(L, hy);
-      ctx.lineTo(R, hy);
-      ctx.stroke();
-
-      // ── Drag handle dots at intersection ──
-      ctx.setLineDash([]);
-      ctx.fillStyle   = dragV || dragH ? GUIDE_ACTIVE_C : GUIDE_CENTER_C;
-      ctx.globalAlpha = dragV || dragH ? 1.0 : 0.7;
-      ctx.beginPath();
-      ctx.arc(vx, hy, dragV || dragH ? 4 : 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-    });
-  });
-
-  // ── Smart snap guides (shown while dragging a photo) ──
-  if (_smartGuides.length > 0) {
-    _smartGuides.forEach(g => {
-      const { L, T, R, B } = _slotScreenRect(g.state, g.slot);
-      ctx.save();
-      ctx.strokeStyle = g.isEdge ? GUIDE_SNAP_EDGE_C : GUIDE_SNAP_C;
-      ctx.lineWidth   = 1.5;
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 0.9;
-      ctx.beginPath();
-      if (g.axis === "v") { ctx.moveTo(g.x, T); ctx.lineTo(g.x, B); }
-      else                { ctx.moveTo(L, g.y); ctx.lineTo(R, g.y); }
-      ctx.stroke();
-      ctx.restore();
-    });
+function _ensureGuideOverlay() {
+  if (_guideOvCanvas && _guideOvCanvas.parentNode) return _guideOvCanvas;
+  var area = document.getElementById("canvasArea");
+  if (!area) return null;
+  var ov = document.createElement("canvas");
+  ov.id = "guideOverlayCanvas";
+  ov.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;z-index:8";
+  area.style.position = "relative";
+  area.appendChild(ov);
+  _guideOvCanvas = ov;
+  _sizeGuideOverlay();
+  if (window.ResizeObserver) {
+    new ResizeObserver(_sizeGuideOverlay).observe(area);
   }
+  return ov;
+}
+function _sizeGuideOverlay() {
+  var ov = _guideOvCanvas;
+  var lc = canvas && canvas.lowerCanvasEl;
+  if (!ov || !lc) return;
+  var w = lc.offsetWidth  || lc.clientWidth  || 800;
+  var h = lc.offsetHeight || lc.clientHeight || 600;
+  ov.style.width  = w + "px";
+  ov.style.height = h + "px";
+  ov.width  = w;
+  ov.height = h;
 }
 
-// Initialise guide drag on the upper canvas element
-function initGuideDrag() {
-  const el = canvas.upperCanvasEl;
+// ── label pill ─────────────────────────────────────────────────
+function _pill(ctx, x, y, text, col) {
+  ctx.save();
+  ctx.font = "bold 10px system-ui,sans-serif";
+  var tw = ctx.measureText(text).width;
+  var pw = tw + 8, ph = 15;
+  var bx = Math.max(2, x - pw / 2);
+  var by = Math.max(2, y - ph - 4);
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
+  ctx.fillRect(bx, by, pw, ph);
+  ctx.fillStyle = col || "#fff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, bx + 4, by + ph / 2);
+  ctx.restore();
+}
 
-  // mousedown in capture phase — intercept before Fabric sees it
-  el.addEventListener("mousedown", e => {
+// ── main draw ──────────────────────────────────────────────────
+function _drawSlotCenterGuides() {
+  var ov = _ensureGuideOverlay();
+  if (!ov) return;
+  var ctx = ov.getContext("2d");
+  ctx.clearRect(0, 0, ov.width, ov.height);
+  if (!_guidesVisible) return;
+
+  var vpt  = canvas.viewportTransform;
+  var zoom = vpt[0], tx = vpt[4], ty = vpt[5];
+
+  Object.values(ArtboardMap).forEach(function(state) {
+    (state.config.slots || []).forEach(function(slot) {
+      if (!state.slotImages[slot.index]) return;
+      var r = _slotScreenRect(state, slot);
+      var sW = r.R - r.L, sH = r.B - r.T;
+
+      // rule-of-thirds
+      if (_thirdsVisible) {
+        ctx.save();
+        ctx.strokeStyle = GUIDE_THIRDS_C;
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([3, 4]);
+        [1/3, 2/3].forEach(function(f) {
+          ctx.beginPath(); ctx.moveTo(r.L + sW * f, r.T); ctx.lineTo(r.L + sW * f, r.B); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(r.L, r.T + sH * f); ctx.lineTo(r.R, r.T + sH * f); ctx.stroke();
+        });
+        ctx.restore();
+      }
+
+      // custom guides
+      var guides = _getGuides(state.frameId, slot.index);
+      guides.forEach(function(g) {
+        var active = _draggingGuide && _draggingGuide.guide === g;
+        var gp     = g.axis === "v" ? r.L + sW * g.frac : r.T + sH * g.frac;
+
+        ctx.save();
+        ctx.strokeStyle = active ? GUIDE_ACTIVE_C : GUIDE_IDLE_C;
+        ctx.lineWidth   = active ? 1.5 : 1;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        if (g.axis === "v") { ctx.moveTo(gp, r.T); ctx.lineTo(gp, r.B); }
+        else                { ctx.moveTo(r.L, gp); ctx.lineTo(r.R, gp); }
+        ctx.stroke();
+
+        // drag-handle diamond
+        ctx.setLineDash([]);
+        var hx = g.axis === "v" ? gp : r.L + sW * 0.5;
+        var hy = g.axis === "v" ? r.T + sH * 0.5 : gp;
+        var hr = active ? 5 : 4;
+        ctx.fillStyle = active ? GUIDE_ACTIVE_C : "rgba(0,200,255,0.75)";
+        ctx.beginPath();
+        ctx.moveTo(hx, hy - hr); ctx.lineTo(hx + hr, hy);
+        ctx.lineTo(hx, hy + hr); ctx.lineTo(hx - hr, hy);
+        ctx.closePath(); ctx.fill();
+
+        // coord label during drag
+        if (active) {
+          var dim   = g.axis === "v" ? slot.w : slot.h;
+          var px    = _fracToPx(g.frac, dim);
+          var pct   = Math.round(g.frac * 100);
+          var label = (g.axis === "v" ? "X" : "Y") + ": " + px + "px \u00b7 " + pct + "%";
+          if (g.axis === "v") _pill(ctx, gp, r.T + 16, label, GUIDE_ACTIVE_C);
+          else                _pill(ctx, r.L + 46, gp, label, GUIDE_ACTIVE_C);
+        }
+        ctx.restore();
+      });
+
+      // photo-centre crosshair on selected image
+      var img = state.slotImages[slot.index];
+      if (img && canvas.getActiveObject() === img) {
+        var cp = img.getCenterPoint();
+        var cx = cp.x * zoom + tx;
+        var cy = cp.y * zoom + ty;
+
+        if (cx > r.L && cx < r.R && cy > r.T && cy < r.B) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(255, 70, 70, 0.9)";
+          ctx.lineWidth   = 1;
+          ctx.setLineDash([3, 3]);
+          var A = 10;
+          ctx.beginPath(); ctx.moveTo(cx - A, cy); ctx.lineTo(cx + A, cy); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(cx, cy - A); ctx.lineTo(cx, cy + A); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "rgba(255,70,70,0.95)";
+          ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+
+          // live distance lines to each guide while dragging
+          if (_isDraggingPhoto) {
+            guides.forEach(function(g) {
+              var gp = g.axis === "v" ? r.L + sW * g.frac : r.T + sH * g.frac;
+              ctx.save();
+              ctx.strokeStyle = GUIDE_DIST_C;
+              ctx.lineWidth   = 1;
+              ctx.setLineDash([2, 3]);
+              ctx.beginPath();
+              if (g.axis === "v") { ctx.moveTo(cx, cy); ctx.lineTo(gp, cy); }
+              else                { ctx.moveTo(cx, cy); ctx.lineTo(cx, gp); }
+              ctx.stroke();
+              var screenDist = g.axis === "v" ? Math.abs(cx - gp) : Math.abs(cy - gp);
+              var nativeDist = Math.round(screenDist / (state.scale * zoom));
+              var lx = g.axis === "v" ? (cx + gp) / 2 : cx + 8;
+              var ly = g.axis === "v" ? cy - 9          : (cy + gp) / 2;
+              _pill(ctx, lx, ly, nativeDist + "px", GUIDE_DIST_C);
+              ctx.restore();
+            });
+            // absolute photo-centre position within slot
+            var relX = Math.round((cx - r.L) / (state.scale * zoom));
+            var relY = Math.round((cy - r.T) / (state.scale * zoom));
+            _pill(ctx, Math.min(cx + 14, r.R - 35), cy - 22, relX + ", " + relY, "rgba(255,200,80,1)");
+          }
+        }
+      }
+
+      // snap highlights
+      _smartGuides.forEach(function(sg) {
+        var sr = _slotScreenRect(sg.state, sg.slot);
+        ctx.save();
+        ctx.strokeStyle = sg.isEdge ? GUIDE_SNAP_EDGE_C : GUIDE_SNAP_C;
+        ctx.lineWidth   = 1.5;
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        if (sg.axis === "v") { ctx.moveTo(sg.x, sr.T); ctx.lineTo(sg.x, sr.B); }
+        else                  { ctx.moveTo(sr.L, sg.y); ctx.lineTo(sr.R, sg.y); }
+        ctx.stroke();
+        ctx.restore();
+      });
+    });
+  });
+}
+
+// ── guide drag (capture-phase on Fabric upper canvas) ──────────
+function initGuideDrag() {
+  var el = canvas.upperCanvasEl;
+
+  el.addEventListener("mousedown", function(e) {
     if (e.button !== 0) return;
-    const hit = _hitTestGuide(e.offsetX, e.offsetY);
+    var hit = _hitTestGuide(e.offsetX, e.offsetY);
     if (!hit) return;
-    e.stopPropagation();
-    e.preventDefault();
+    e.stopPropagation(); e.preventDefault();
     _draggingGuide = hit;
-    el.style.cursor = hit.axis === "v" ? "col-resize" : "row-resize";
+    el.style.cursor = hit.guide.axis === "v" ? "col-resize" : "row-resize";
     canvas.renderAll();
   }, true);
 
-  // mousemove on window so drag works even outside the canvas
-  window.addEventListener("mousemove", e => {
+  window.addEventListener("mousemove", function(e) {
     if (!_draggingGuide) return;
-    const rect = el.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
-    const { state, slot, axis } = _draggingGuide;
-    const { L, T, R, B } = _slotScreenRect(state, slot);
-    const pos = _getGuidePos(state.frameId, slot.index);
-
-    if (axis === "v") {
-      pos.vFrac = Math.max(0.02, Math.min(0.98, (sx - L) / (R - L)));
-    } else {
-      pos.hFrac = Math.max(0.02, Math.min(0.98, (sy - T) / (B - T)));
-    }
+    var rect = el.getBoundingClientRect();
+    var sx = e.clientX - rect.left;
+    var sy = e.clientY - rect.top;
+    var r = _slotScreenRect(_draggingGuide.state, _draggingGuide.slot);
+    var g = _draggingGuide.guide;
+    if (g.axis === "v") g.frac = Math.max(0.005, Math.min(0.995, (sx - r.L) / (r.R - r.L)));
+    else                g.frac = Math.max(0.005, Math.min(0.995, (sy - r.T) / (r.B - r.T)));
     canvas.renderAll();
   });
 
-  // mouseup — end drag
-  window.addEventListener("mouseup", () => {
+  window.addEventListener("mouseup", function() {
     if (!_draggingGuide) return;
     _draggingGuide = null;
     el.style.cursor = "";
+    _renderGuidePanel();
     canvas.renderAll();
   });
 
-  // Cursor hint on hover (bubble phase — only changes cursor, doesn't block Fabric)
-  el.addEventListener("mousemove", e => {
+  el.addEventListener("mousemove", function(e) {
     if (_draggingGuide) return;
-    const hit = _hitTestGuide(e.offsetX, e.offsetY);
-    el.style.cursor = hit ? (hit.axis === "v" ? "col-resize" : "row-resize") : "";
+    var hit = _hitTestGuide(e.offsetX, e.offsetY);
+    el.style.cursor = hit ? (hit.guide.axis === "v" ? "col-resize" : "row-resize") : "";
   });
 
-  // Double-click on guide resets it to centre
-  el.addEventListener("dblclick", e => {
-    const hit = _hitTestGuide(e.offsetX, e.offsetY);
+  el.addEventListener("dblclick", function(e) {
+    var hit = _hitTestGuide(e.offsetX, e.offsetY);
     if (!hit) return;
     e.stopPropagation();
-    const pos = _getGuidePos(hit.state.frameId, hit.slot.index);
-    if (hit.axis === "v") pos.vFrac = 0.5;
-    else                  pos.hFrac = 0.5;
-    canvas.renderAll();
+    hit.guide.frac = 0.5;
+    _renderGuidePanel(); canvas.renderAll();
     notify("Guide reset to centre", "info");
+  }, true);
+
+  el.addEventListener("contextmenu", function(e) {
+    var hit = _hitTestGuide(e.offsetX, e.offsetY);
+    if (!hit) return;
+    e.preventDefault(); e.stopPropagation();
+    _showGuideCtxMenu(e.clientX, e.clientY, hit);
   }, true);
 }
 
-// Compute smart snap guides while dragging a slot-image
-function _onObjectMoving(e) {
-  const obj = e.target;
-  if (!obj) return;
-  const sb = getSlotForImageObject(obj);
-  if (!sb) return;
-
-  const { state } = sb;
-  const [zoom, , , , tx, ty] = canvas.viewportTransform;
-
-  // Object center in screen space
-  const objCX = obj.getCenterPoint().x * zoom + tx;
-  const objCY = obj.getCenterPoint().y * zoom + ty;
-
-  const guides = [];
-
-  (state.config.slots || []).forEach(sl => {
-    const { L, T, R, B } = _slotScreenRect(state, sl);
-    const pos = _getGuidePos(state.frameId, sl.index);
-    const CX  = L + (R - L) * pos.vFrac;
-    const CY  = T + (B - T) * pos.hFrac;
-
-    // Snap to vertical guide line
-    if (Math.abs(objCX - CX) < SNAP_THRESH) {
-      guides.push({ axis: "v", x: CX, state, slot: sl, isEdge: false });
-      obj.set("left", Math.round((CX - tx) / zoom));
-      obj.setCoords();
-    }
-    // Snap to horizontal guide line
-    if (Math.abs(objCY - CY) < SNAP_THRESH) {
-      guides.push({ axis: "h", y: CY, state, slot: sl, isEdge: false });
-      obj.set("top", Math.round((CY - ty) / zoom));
-      obj.setCoords();
-    }
-    // Snap to slot left edge
-    if (Math.abs(objCX - L) < SNAP_THRESH) guides.push({ axis: "v", x: L, state, slot: sl, isEdge: true });
-    // Snap to slot right edge
-    if (Math.abs(objCX - R) < SNAP_THRESH) guides.push({ axis: "v", x: R, state, slot: sl, isEdge: true });
-    // Snap to slot top edge
-    if (Math.abs(objCY - T) < SNAP_THRESH) guides.push({ axis: "h", y: T, state, slot: sl, isEdge: true });
-    // Snap to slot bottom edge
-    if (Math.abs(objCY - B) < SNAP_THRESH) guides.push({ axis: "h", y: B, state, slot: sl, isEdge: true });
+// ── context menu ───────────────────────────────────────────────
+function _showGuideCtxMenu(cx, cy, hit) {
+  var menu = document.getElementById("guideCtxMenu");
+  if (!menu) {
+    menu = document.createElement("div");
+    menu.id = "guideCtxMenu";
+    document.body.appendChild(menu);
+  }
+  menu.className = "guide-ctx-menu";
+  var dim  = hit.guide.axis === "v" ? hit.slot.w : hit.slot.h;
+  var px   = _fracToPx(hit.guide.frac, dim);
+  var pct  = Math.round(hit.guide.frac * 100);
+  menu.innerHTML =
+    '<div class="gcm-title">' + (hit.guide.axis === "v" ? "Vertical" : "Horizontal") + ' Guide \u00b7 ' + px + 'px (' + pct + '%)</div>' +
+    '<div class="gcm-item" data-a="center">\u21a9 Reset to centre (50%)</div>' +
+    '<div class="gcm-item" data-a="mirror">\u21c4 Mirror to ' + (100 - pct) + '%</div>' +
+    '<div class="gcm-item" data-a="dup">+ Duplicate mirrored</div>' +
+    '<div class="gcm-item" data-a="third1">\u2192 Move to \u2153 (33%)</div>' +
+    '<div class="gcm-item" data-a="third2">\u2192 Move to \u2154 (67%)</div>' +
+    '<div class="gcm-sep"></div>' +
+    '<div class="gcm-item gcm-del" data-a="del">\u2715 Delete guide</div>';
+  menu.style.cssText = "left:" + cx + "px;top:" + cy + "px;display:block";
+  requestAnimationFrame(function() {
+    var mr = menu.getBoundingClientRect();
+    if (mr.right  > window.innerWidth)  menu.style.left = (cx - mr.width)  + "px";
+    if (mr.bottom > window.innerHeight) menu.style.top  = (cy - mr.height) + "px";
   });
 
-  _smartGuides = guides;
+  menu.onclick = function(e) {
+    var a = e.target.dataset.a;
+    if (!a) return;
+    var state = hit.state, slot = hit.slot, guide = hit.guide;
+    if      (a === "center") { guide.frac = 0.5; }
+    else if (a === "mirror") { guide.frac = 1 - guide.frac; }
+    else if (a === "dup")    { _addGuide(state.frameId, slot.index, guide.axis, 1 - guide.frac); }
+    else if (a === "third1") { guide.frac = 1/3; }
+    else if (a === "third2") { guide.frac = 2/3; }
+    else if (a === "del")    { _deleteGuide(state.frameId, slot.index, guide.id); }
+    _renderGuidePanel(); canvas.renderAll();
+    menu.style.display = "none";
+  };
+
+  var close = function(ev) {
+    if (!menu.contains(ev.target)) { menu.style.display = "none"; document.removeEventListener("mousedown", close); }
+  };
+  setTimeout(function() { document.addEventListener("mousedown", close); }, 50);
+}
+
+// ── guide panel render ─────────────────────────────────────────
+function _renderGuidePanel() {
+  var list  = document.getElementById("guideList");
+  var badge = document.getElementById("guideBadge");
+  if (!list) return;
+
+  var state = ArtboardMap[activeFrameId];
+  if (!state) { list.innerHTML = '<p class="filter-hint">No active frame</p>'; return; }
+
+  var slots = (state.config.slots || []).filter(function(sl) { return state.slotImages[sl.index]; });
+  if (!slots.length) {
+    list.innerHTML = '<p class="filter-hint">Upload a photo to use guides</p>';
+    if (badge) badge.textContent = "";
+    return;
+  }
+
+  var totalGuides = 0;
+  var html = "";
+  slots.forEach(function(sl) {
+    var guides = _getGuides(state.frameId, sl.index);
+    totalGuides += guides.length;
+    html += '<div class="guide-slot-group"><div class="guide-slot-label">Slot ' + (sl.index + 1) + '</div>';
+    guides.forEach(function(g) {
+      var dim = g.axis === "v" ? sl.w : sl.h;
+      var px  = _fracToPx(g.frac, dim);
+      var pct = Math.round(g.frac * 100);
+      html +=
+        '<div class="guide-item">' +
+          '<span class="gax gax-' + g.axis + '">' + g.axis.toUpperCase() + '</span>' +
+          '<input class="gpx" type="number" value="' + px + '" min="1" max="' + (dim - 1) + '"' +
+            ' data-gid="' + g.id + '" data-fid="' + state.frameId + '" data-sidx="' + sl.index + '"' +
+            ' data-axis="' + g.axis + '" data-dim="' + dim + '" title="Position in native pixels">' +
+          '<span class="gpct">' + pct + '%</span>' +
+          '<button class="gdel" data-gid="' + g.id + '" data-fid="' + state.frameId + '" data-sidx="' + sl.index + '" title="Delete">\u2715</button>' +
+        '</div>';
+    });
+    html +=
+      '<div class="guide-add-btns">' +
+        '<button class="gadd" data-axis="v" data-fid="' + state.frameId + '" data-sidx="' + sl.index + '">+ Vertical</button>' +
+        '<button class="gadd" data-axis="h" data-fid="' + state.frameId + '" data-sidx="' + sl.index + '">+ Horizontal</button>' +
+      '</div></div>';
+  });
+  list.innerHTML = html;
+  if (badge) badge.textContent = totalGuides || "";
+
+  list.querySelectorAll(".gpx").forEach(function(inp) {
+    inp.addEventListener("change", function() {
+      var fId  = parseInt(inp.dataset.fid);
+      var sIdx = parseInt(inp.dataset.sidx);
+      var dim  = parseInt(inp.dataset.dim);
+      var px   = Math.max(1, Math.min(dim - 1, parseInt(inp.value) || 0));
+      inp.value = px;
+      var g = _getGuides(fId, sIdx).find(function(gg) { return gg.id === inp.dataset.gid; });
+      if (g) { g.frac = _pxToFrac(px, dim); canvas.renderAll(); }
+      _renderGuidePanel();
+    });
+  });
+  list.querySelectorAll(".gdel").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      _deleteGuide(parseInt(btn.dataset.fid), parseInt(btn.dataset.sidx), btn.dataset.gid);
+    });
+  });
+  list.querySelectorAll(".gadd").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      _addGuide(parseInt(btn.dataset.fid), parseInt(btn.dataset.sidx), btn.dataset.axis);
+    });
+  });
+}
+
+// ── bind panel toggle buttons ──────────────────────────────────
+function bindGuidePanel() {
+  document.getElementById("btnToggleGuides")?.addEventListener("click", function() {
+    _guidesVisible = !_guidesVisible;
+    document.getElementById("btnToggleGuides")?.classList.toggle("active", _guidesVisible);
+    canvas.renderAll();
+  });
+  document.getElementById("btnToggleThirds")?.addEventListener("click", function() {
+    _thirdsVisible = !_thirdsVisible;
+    document.getElementById("btnToggleThirds")?.classList.toggle("active", _thirdsVisible);
+    canvas.renderAll();
+  });
+  document.getElementById("btnToggleSnap")?.addEventListener("click", function() {
+    _snapEnabled = !_snapEnabled;
+    document.getElementById("btnToggleSnap")?.classList.toggle("active", _snapEnabled);
+  });
+}
+
+// ── object:moving ──────────────────────────────────────────────
+function _onObjectMoving(e) {
+  var obj = e.target;
+  if (!obj) return;
+  var sb = getSlotForImageObject(obj);
+  if (!sb) return;
+  _isDraggingPhoto = true;
+
+  if (!_snapEnabled) { _smartGuides = []; return; }
+
+  var state = sb.state;
+  var vpt  = canvas.viewportTransform;
+  var zoom = vpt[0], tx = vpt[4], ty = vpt[5];
+  var cp   = obj.getCenterPoint();
+  var objCX = cp.x * zoom + tx;
+  var objCY = cp.y * zoom + ty;
+  var snaps = [];
+
+  (state.config.slots || []).forEach(function(sl) {
+    var r  = _slotScreenRect(state, sl);
+    var sW = r.R - r.L, sH = r.B - r.T;
+
+    // snap to custom guide lines
+    _getGuides(state.frameId, sl.index).forEach(function(g) {
+      var gp = g.axis === "v" ? r.L + sW * g.frac : r.T + sH * g.frac;
+      if (g.axis === "v" && Math.abs(objCX - gp) < SNAP_THRESH) {
+        snaps.push({ axis: "v", x: gp, state: state, slot: sl, isEdge: false });
+        obj.set("left", Math.round((gp - tx) / zoom)); obj.setCoords();
+      }
+      if (g.axis === "h" && Math.abs(objCY - gp) < SNAP_THRESH) {
+        snaps.push({ axis: "h", y: gp, state: state, slot: sl, isEdge: false });
+        obj.set("top", Math.round((gp - ty) / zoom)); obj.setCoords();
+      }
+    });
+
+    // snap to rule-of-thirds
+    if (_thirdsVisible) {
+      [1/3, 2/3].forEach(function(f) {
+        var vx = r.L + sW * f, hy = r.T + sH * f;
+        if (Math.abs(objCX - vx) < SNAP_THRESH) {
+          snaps.push({ axis: "v", x: vx, state: state, slot: sl, isEdge: false });
+          obj.set("left", Math.round((vx - tx) / zoom)); obj.setCoords();
+        }
+        if (Math.abs(objCY - hy) < SNAP_THRESH) {
+          snaps.push({ axis: "h", y: hy, state: state, slot: sl, isEdge: false });
+          obj.set("top", Math.round((hy - ty) / zoom)); obj.setCoords();
+        }
+      });
+    }
+
+    // snap to slot edges
+    if (Math.abs(objCX - r.L) < SNAP_THRESH) snaps.push({ axis: "v", x: r.L, state: state, slot: sl, isEdge: true });
+    if (Math.abs(objCX - r.R) < SNAP_THRESH) snaps.push({ axis: "v", x: r.R, state: state, slot: sl, isEdge: true });
+    if (Math.abs(objCY - r.T) < SNAP_THRESH) snaps.push({ axis: "h", y: r.T, state: state, slot: sl, isEdge: true });
+    if (Math.abs(objCY - r.B) < SNAP_THRESH) snaps.push({ axis: "h", y: r.B, state: state, slot: sl, isEdge: true });
+  });
+
+  _smartGuides = snaps;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2535,6 +2825,9 @@ function bindKeyboard() {
     if (isTyping()) return;
 
     // ── Shortcut-registry actions ─────────────────────────────
+    if (_normalizeKey(e) === "g") { e.preventDefault(); _guidesVisible = !_guidesVisible; document.getElementById("btnToggleGuides")?.classList.toggle("active", _guidesVisible); canvas.renderAll(); return; }
+    if (_normalizeKey(e) === "shift+r") { e.preventDefault(); _thirdsVisible = !_thirdsVisible; document.getElementById("btnToggleThirds")?.classList.toggle("active", _thirdsVisible); canvas.renderAll(); return; }
+    if (_normalizeKey(e) === "shift+s") { e.preventDefault(); _snapEnabled = !_snapEnabled; document.getElementById("btnToggleSnap")?.classList.toggle("active", _snapEnabled); notify(_snapEnabled ? "Snap ON" : "Snap OFF", "info"); return; }
     if (_is(e,"undo"))           { e.preventDefault(); undo(); return; }
     if (_is(e,"redo"))           { e.preventDefault(); redo(); return; }
     if (_is(e,"save"))           { e.preventDefault(); saveSession(); return; }
