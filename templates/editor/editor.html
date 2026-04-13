@@ -35,22 +35,16 @@
     </div>
 
     <div class="topbar-center">
-      <div class="topbar-tip-wrap">
-        <button class="topbar-btn" id="btnUndo">↩</button>
-        <div class="topbar-tooltip">Undo<kbd>Ctrl+Z</kbd></div>
-      </div>
-      <div class="topbar-tip-wrap">
-        <button class="topbar-btn" id="btnRedo">↪</button>
-        <div class="topbar-tooltip">Redo<kbd>Ctrl+Y</kbd></div>
-      </div>
+      <button class="topbar-btn" id="btnUndo"          data-tip="Undo" data-tip-key="Ctrl+Z">↩</button>
+      <button class="topbar-btn" id="btnRedo"          data-tip="Redo" data-tip-key="Ctrl+Y">↪</button>
       <div class="topbar-divider"></div>
-      <button class="topbar-btn" id="btnZoomOut"   title="Zoom Out (-)">−</button>
+      <button class="topbar-btn" id="btnZoomOut"       data-tip="Zoom Out"  data-tip-key="−">−</button>
       <span  class="zoom-display" id="zoomDisplay">100%</span>
-      <button class="topbar-btn" id="btnZoomIn"    title="Zoom In (+)">+</button>
-      <button class="topbar-btn" id="btnFitAll"       title="Fit all artboards (F)">⤢</button>
-      <button class="topbar-btn" id="btnFocusFrame"  title="Focus active frame (Ctrl+0)">⊙</button>
+      <button class="topbar-btn" id="btnZoomIn"        data-tip="Zoom In"   data-tip-key="+">+</button>
+      <button class="topbar-btn" id="btnFitAll"        data-tip="Fit All Frames" data-tip-key="F">⤢</button>
+      <button class="topbar-btn" id="btnFocusFrame"    data-tip="Focus Active Frame" data-tip-key="Ctrl+0">⊙</button>
       <div class="topbar-divider"></div>
-      <button class="topbar-btn danger" id="btnDeleteSelected" title="Delete selected (Del)">🗑</button>
+      <button class="topbar-btn danger" id="btnDeleteSelected" data-tip="Delete Selected" data-tip-key="Del">🗑</button>
     </div>
 
     <div class="topbar-right">
@@ -64,16 +58,49 @@
       </div>
       <div class="topbar-divider"></div>
       <span class="save-status" id="saveStatus"></span>
-      <div class="topbar-tip-wrap">
-        <button class="topbar-btn-primary" id="btnSave">Save</button>
-        <div class="topbar-tooltip topbar-tooltip--up">Manual save<kbd>Ctrl+S</kbd></div>
-      </div>
-      <button class="topbar-btn-primary green"  id="btnExport"       title="Export active artboard (native resolution)">Export PNG</button>
-      <button class="topbar-btn-primary green"  id="btnExportAll"    title="Export all frames with photos">Export All</button>
+      <button class="topbar-btn-primary"        id="btnSave"           data-tip="Manual Save"    data-tip-key="Ctrl+S">Save</button>
+      <button class="topbar-btn-primary green"  id="btnExport"         data-tip="Export Active Frame"  data-tip-key="Ctrl+E">Export PNG</button>
+      <button class="topbar-btn-primary green"  id="btnExportAll"      data-tip="Export All Frames"    data-tip-key="Ctrl+Shift+E">Export All</button>
       <div class="topbar-divider"></div>
-      <button class="topbar-btn-primary blue"   id="btnSettingsExport" title="Export all settings + photos as JSON">⬇ Settings</button>
-      <button class="topbar-btn-primary blue"   id="btnSettingsImport" title="Import settings JSON from another user">⬆ Import</button>
+      <button class="topbar-btn-primary blue"   id="btnSettingsExport" data-tip="Export Settings JSON" data-tip-key="Ctrl+Shift+S">⬇ Settings</button>
+      <button class="topbar-btn-primary blue"   id="btnSettingsImport" data-tip="Import Settings JSON">⬆ Import</button>
       <input type="file" id="settingsImportInput" accept=".json" style="display:none">
+      <div class="topbar-divider"></div>
+      <button class="topbar-btn"      id="btnShortcuts" data-tip="Keyboard Shortcuts" data-tip-key="Ctrl+/">⌨</button>
+      <button class="topbar-btn tour-btn" id="btnTour"  data-tip="Guided Tour"        data-tip-key="Ctrl+Shift+H">?</button>
+    </div>
+  </div>
+
+  <!-- ══ SHORTCUTS MODAL ══════════════════════════════════════════ -->
+  <div class="sc-modal-overlay" id="scModal" style="display:none">
+    <div class="sc-modal">
+      <div class="sc-modal-header">
+        <span class="sc-modal-title">⌨ Keyboard Shortcuts</span>
+        <button class="sc-modal-close" id="scModalClose">✕</button>
+      </div>
+      <p class="sc-modal-hint">Click any shortcut key to change it. Press the new key combo, then Enter to confirm or Escape to cancel.</p>
+      <div class="sc-modal-body" id="scModalBody"></div>
+      <div class="sc-modal-footer">
+        <button class="sc-btn-reset" id="scResetAll">Reset All to Default</button>
+        <button class="sc-btn-done"  id="scDone">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TOUR OVERLAY ═════════════════════════════════════════════ -->
+  <div class="tour-overlay" id="tourOverlay" style="display:none"></div>
+  <div class="tour-spotlight" id="tourSpotlight" style="display:none"></div>
+  <div class="tour-card" id="tourCard" style="display:none">
+    <div class="tour-card-header">
+      <span class="tour-badge" id="tourBadge">1 / 18</span>
+      <button class="tour-skip" id="tourSkip">Skip Tour</button>
+    </div>
+    <h3 class="tour-title" id="tourTitle"></h3>
+    <p  class="tour-desc"  id="tourDesc"></p>
+    <div class="tour-dots" id="tourDots"></div>
+    <div class="tour-nav">
+      <button class="tour-btn-nav" id="tourPrev">← Prev</button>
+      <button class="tour-btn-nav tour-btn-next" id="tourNext">Next →</button>
     </div>
   </div>
 
@@ -326,6 +353,10 @@
   </div>
 
 </div><!-- /editor-shell -->
+
+<!-- ── Global tooltip singleton ───────────────────────────────── -->
+<div id="globalTooltip"></div>
+
 {% endblock %}
 
 {% block extra_js %}

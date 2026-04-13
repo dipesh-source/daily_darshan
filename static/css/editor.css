@@ -59,64 +59,47 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .zoom-display   { font-size: 11px; color: var(--editor-muted); min-width: 40px; text-align: center; }
 
 /* ── Topbar button tooltips ──────────────────────────────── */
-.topbar-tip-wrap {
-  position: relative;
-  display: inline-flex;
-}
-.topbar-tooltip {
-  position: absolute;
-  top: calc(100% + 7px);
-  left: 50%;
-  transform: translateX(-50%) translateY(-4px);
-  background: #1e1e1e;
-  border: 1px solid var(--editor-border);
-  border-radius: 5px;
-  padding: 4px 9px;
+/* Tooltip is rendered as a fixed singleton via JS — see initGlobalTooltip() */
+#globalTooltip {
+  position: fixed;
+  background: #111;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 5px 11px;
   white-space: nowrap;
   font-size: 11px;
-  color: var(--editor-text);
-  display: flex; align-items: center; gap: 6px;
+  color: #eee;
+  display: none; align-items: center; gap: 7px;
   pointer-events: none;
   opacity: 0;
-  transition: opacity .12s ease, transform .12s ease;
-  z-index: 9999;
-  box-shadow: 0 3px 10px rgba(0,0,0,.5);
+  transition: opacity .15s ease;
+  z-index: 99999;
+  box-shadow: 0 4px 16px rgba(0,0,0,.7);
 }
-/* Arrow pointing up */
-.topbar-tooltip::before {
+#globalTooltip.visible { display: flex; opacity: 1; }
+#globalTooltip::before {
   content: "";
   position: absolute;
   bottom: 100%; left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-bottom-color: var(--editor-border);
+  border-bottom-color: #555;
 }
-.topbar-tooltip::after {
+#globalTooltip::after {
   content: "";
   position: absolute;
   bottom: calc(100% - 1px); left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-bottom-color: #1e1e1e;
+  border-bottom-color: #111;
 }
-/* Variant that opens upward (for buttons near bottom of bar) */
-.topbar-tooltip--up {
-  top: auto;
-  bottom: calc(100% + 7px);
-  transform: translateX(-50%) translateY(4px);
-}
-.topbar-tooltip--up::before { bottom: auto; top: 100%; border-bottom-color: transparent; border-top-color: var(--editor-border); }
-.topbar-tooltip--up::after  { bottom: auto; top: calc(100% - 1px); border-bottom-color: transparent; border-top-color: #1e1e1e; }
-
-.topbar-tip-wrap:hover .topbar-tooltip {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-.topbar-tooltip kbd {
-  background: #333;
+#globalTooltip.tip-up::before { bottom: auto; top: 100%; border-bottom-color: transparent; border-top-color: #555; }
+#globalTooltip.tip-up::after  { bottom: auto; top: calc(100% - 1px); border-bottom-color: transparent; border-top-color: #111; }
+#globalTooltip kbd {
+  background: #2a2a2a;
   border: 1px solid #555;
   border-radius: 3px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   font-size: 10px;
   font-family: monospace;
   color: var(--editor-accent);
@@ -569,3 +552,164 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .right-panel::-webkit-scrollbar { width: 4px; }
 .left-panel::-webkit-scrollbar-thumb,
 .right-panel::-webkit-scrollbar-thumb { background: var(--editor-border); border-radius: 2px; }
+
+/* ═══════════════════════════════════════════════════════════
+   TOUR BUTTON
+═══════════════════════════════════════════════════════════ */
+.tour-btn {
+  font-weight: 900; font-size: 15px;
+  border: 2px solid var(--editor-accent);
+  color: var(--editor-accent);
+  border-radius: 50%;
+  width: 32px; height: 32px;
+  padding: 0; line-height: 1;
+  background: rgba(212,160,23,.1);
+  box-shadow: 0 0 0 0 rgba(212,160,23,.4);
+  transition: background .15s, box-shadow .15s, transform .15s;
+}
+.tour-btn:hover {
+  background: rgba(212,160,23,.22);
+  box-shadow: 0 0 0 4px rgba(212,160,23,.18);
+  transform: scale(1.08);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHORTCUTS MODAL
+═══════════════════════════════════════════════════════════ */
+.sc-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 10100;
+  display: flex; align-items: center; justify-content: center;
+}
+.sc-modal {
+  background: #1c1c1c;
+  border: 1px solid var(--editor-border);
+  border-radius: 10px;
+  width: min(680px, 95vw);
+  max-height: 85vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.7);
+}
+.sc-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 0;
+}
+.sc-modal-title { font-size: 15px; font-weight: 700; color: var(--editor-text); }
+.sc-modal-close {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--editor-hover); color: var(--editor-muted);
+  font-size: 12px; display: flex; align-items: center; justify-content: center;
+  transition: all .12s;
+}
+.sc-modal-close:hover { background: #4A1010; color: #FF8888; }
+.sc-modal-hint {
+  font-size: 11px; color: var(--editor-muted);
+  padding: 8px 20px 0; margin: 0;
+}
+.sc-modal-body {
+  overflow-y: auto; flex: 1; padding: 12px 20px 8px;
+}
+.sc-category { font-size: 11px; font-weight: 700; color: var(--editor-accent); text-transform: uppercase; letter-spacing: .08em; margin: 14px 0 6px; }
+.sc-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; border-radius: 5px; gap: 12px;
+}
+.sc-row:hover { background: var(--editor-hover); }
+.sc-label { font-size: 12px; color: var(--editor-text); flex: 1; }
+.sc-key {
+  background: #2a2a2a; border: 1px solid #444;
+  border-radius: 5px; padding: 3px 10px;
+  font-size: 11px; font-family: monospace; color: var(--editor-accent);
+  cursor: pointer; transition: all .12s; white-space: nowrap;
+  min-width: 80px; text-align: center;
+}
+.sc-key:hover  { border-color: var(--editor-accent); }
+.sc-key.recording {
+  border-color: #ff6b35; color: #ff6b35;
+  animation: sc-pulse 0.8s ease-in-out infinite;
+}
+@keyframes sc-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+.sc-modal-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 20px; border-top: 1px solid var(--editor-border);
+}
+.sc-btn-reset {
+  font-size: 11px; color: var(--editor-muted);
+  padding: 5px 12px; border-radius: 4px;
+  border: 1px solid var(--editor-border);
+  background: transparent; transition: all .12s;
+}
+.sc-btn-reset:hover { color: #FF8888; border-color: #FF8888; }
+.sc-btn-done {
+  font-size: 12px; font-weight: 700;
+  background: var(--editor-accent); color: #1a1a1a;
+  padding: 6px 20px; border-radius: 5px;
+  transition: background .12s;
+}
+.sc-btn-done:hover { background: #c8920f; }
+
+/* ═══════════════════════════════════════════════════════════
+   TOUR OVERLAY & SPOTLIGHT
+═══════════════════════════════════════════════════════════ */
+.tour-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.0);
+  z-index: 9900;
+  pointer-events: none;
+}
+.tour-spotlight {
+  position: fixed;
+  z-index: 9901;
+  pointer-events: none;
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.68), 0 0 0 2px var(--editor-accent);
+  transition: top .3s ease, left .3s ease, width .3s ease, height .3s ease;
+}
+.tour-card {
+  position: fixed;
+  z-index: 9902;
+  background: #1e1e1e;
+  border: 1px solid var(--editor-accent);
+  border-radius: 10px;
+  padding: 16px 18px 14px;
+  width: 300px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.7);
+  transition: top .3s ease, left .3s ease;
+}
+.tour-card-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.tour-badge {
+  font-size: 10px; font-weight: 700; color: var(--editor-accent);
+  background: rgba(212,160,23,.15);
+  border-radius: 20px; padding: 2px 8px;
+}
+.tour-skip {
+  font-size: 11px; color: var(--editor-muted);
+  background: transparent; transition: color .12s;
+}
+.tour-skip:hover { color: #FF8888; }
+.tour-title { font-size: 14px; font-weight: 700; color: var(--editor-text); margin: 0 0 6px; }
+.tour-desc  { font-size: 12px; color: #bbb; line-height: 1.55; margin: 0 0 12px; }
+.tour-dots {
+  display: flex; gap: 5px; justify-content: center; margin-bottom: 12px;
+}
+.tour-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--editor-border); transition: background .2s;
+}
+.tour-dot.active { background: var(--editor-accent); }
+.tour-nav { display: flex; gap: 8px; justify-content: flex-end; }
+.tour-btn-nav {
+  font-size: 11px; font-weight: 600;
+  padding: 5px 14px; border-radius: 5px;
+  background: var(--editor-hover); color: var(--editor-text);
+  transition: background .12s;
+}
+.tour-btn-nav:hover { background: #3a3a3a; }
+.tour-btn-next {
+  background: var(--editor-accent); color: #1a1a1a;
+}
+.tour-btn-next:hover { background: #c8920f; }

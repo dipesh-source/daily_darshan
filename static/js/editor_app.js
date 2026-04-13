@@ -191,11 +191,14 @@ document.addEventListener("DOMContentLoaded", () => {
   bindTransformControls();
   bindTextControls();
   bindSettingsIO();
+  bindShortcutsModal();
+  bindTour();
   preloadAllFonts();
   bindTopBar();
   bindLayersPanel();
   bindKeyboard();
   bindAutoTextSync();
+  initGlobalTooltip();
   activateArtboard(window.ARTBOARDS[0].id);
   renderArtboardListPanel();
   // Fit all artboards into view on startup
@@ -2204,38 +2207,334 @@ function bindAutoTextSync() {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────
+// KEYBOARD SHORTCUT REGISTRY
+// ─────────────────────────────────────────────────────────────────
+const SHORTCUT_DEFS = [
+  { id:"undo",            cat:"Edit",   label:"Undo",                    def:"ctrl+z"            },
+  { id:"redo",            cat:"Edit",   label:"Redo",                    def:"ctrl+y"            },
+  { id:"deleteSelected",  cat:"Edit",   label:"Delete Selected",         def:"delete"            },
+  { id:"nudgeLeft",       cat:"Edit",   label:"Nudge Left 1px",          def:"arrowleft"         },
+  { id:"nudgeRight",      cat:"Edit",   label:"Nudge Right 1px",         def:"arrowright"        },
+  { id:"nudgeUp",         cat:"Edit",   label:"Nudge Up 1px",            def:"arrowup"           },
+  { id:"nudgeDown",       cat:"Edit",   label:"Nudge Down 1px",          def:"arrowdown"         },
+  { id:"nudgeLeft10",     cat:"Edit",   label:"Nudge Left 10px",         def:"shift+arrowleft"   },
+  { id:"nudgeRight10",    cat:"Edit",   label:"Nudge Right 10px",        def:"shift+arrowright"  },
+  { id:"nudgeUp10",       cat:"Edit",   label:"Nudge Up 10px",           def:"shift+arrowup"     },
+  { id:"nudgeDown10",     cat:"Edit",   label:"Nudge Down 10px",         def:"shift+arrowdown"   },
+  { id:"escape",          cat:"Edit",   label:"Deselect / Close",        def:"escape"            },
+  { id:"save",            cat:"File",   label:"Save",                    def:"ctrl+s"            },
+  { id:"exportFrame",     cat:"File",   label:"Export Active Frame",     def:"ctrl+e"            },
+  { id:"exportAll",       cat:"File",   label:"Export All Frames",       def:"ctrl+shift+e"      },
+  { id:"exportSettings",  cat:"File",   label:"Export Settings JSON",    def:"ctrl+shift+s"      },
+  { id:"toolSelect",      cat:"Tools",  label:"Select Tool",             def:"v"                 },
+  { id:"toolHand",        cat:"Tools",  label:"Hand (Pan) Tool",         def:"h"                 },
+  { id:"toolText",        cat:"Tools",  label:"Text Tool",               def:"t"                 },
+  { id:"fitAll",          cat:"View",   label:"Fit All Frames",          def:"f"                 },
+  { id:"focusFrame",      cat:"View",   label:"Focus Active Frame",      def:"ctrl+0"            },
+  { id:"zoomIn",          cat:"View",   label:"Zoom In",                 def:"="                 },
+  { id:"zoomOut",         cat:"View",   label:"Zoom Out",                def:"-"                 },
+  { id:"showShortcuts",   cat:"Help",   label:"Keyboard Shortcuts",      def:"ctrl+/"            },
+  { id:"startTour",       cat:"Help",   label:"Start Guided Tour",       def:"ctrl+shift+h"      },
+];
+
+let _shortcuts = {}; // id → active key string
+
+function _loadShortcuts() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("dd_shortcuts") || "{}");
+    SHORTCUT_DEFS.forEach(d => { _shortcuts[d.id] = saved[d.id] || d.def; });
+  } catch {
+    SHORTCUT_DEFS.forEach(d => { _shortcuts[d.id] = d.def; });
+  }
+}
+function _saveShortcuts() {
+  localStorage.setItem("dd_shortcuts", JSON.stringify(_shortcuts));
+}
+function _normalizeKey(e) {
+  const p = [];
+  if (e.ctrlKey || e.metaKey) p.push("ctrl");
+  if (e.shiftKey && !["Shift"].includes(e.key)) p.push("shift");
+  if (e.altKey) p.push("alt");
+  const k = e.key.toLowerCase();
+  if (!["control","meta","shift","alt"].includes(k)) p.push(k);
+  return p.join("+");
+}
+function _is(e, id) {
+  return _normalizeKey(e) === _shortcuts[id];
+}
+// Format a stored key string for display
+function _fmtKey(k) {
+  return k.split("+").map(p =>
+    p === "ctrl" ? "Ctrl" : p === "shift" ? "Shift" : p === "alt" ? "Alt" :
+    p.startsWith("arrow") ? "↑↓←→"[["arrowup","arrowdown","arrowleft","arrowright"].indexOf(p)] || p :
+    p.charAt(0).toUpperCase() + p.slice(1)
+  ).join(" + ");
+}
+
 function bindKeyboard() {
+  _loadShortcuts();
   document.addEventListener("keydown", e => {
     if (isTyping()) return;
-    if (e.ctrlKey || e.metaKey) {
-      if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
-      if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); return; }
-      if (e.key === "s") { e.preventDefault(); saveSession(); return; }
-      if (e.key === "0") { e.preventDefault(); focusActiveFrame(); return; }
-    }
-    if (e.key === "Delete" || e.key === "Backspace") {
-      const obj = canvas.getActiveObject();
-      if (!obj) return;
+
+    // ── Shortcut-registry actions ─────────────────────────────
+    if (_is(e,"undo"))           { e.preventDefault(); undo(); return; }
+    if (_is(e,"redo"))           { e.preventDefault(); redo(); return; }
+    if (_is(e,"save"))           { e.preventDefault(); saveSession(); return; }
+    if (_is(e,"focusFrame"))     { e.preventDefault(); focusActiveFrame(); return; }
+    if (_is(e,"exportFrame"))    { e.preventDefault(); exportFrame(activeFrameId); return; }
+    if (_is(e,"exportAll"))      { e.preventDefault(); exportAll(); return; }
+    if (_is(e,"exportSettings")) { e.preventDefault(); exportSettings(); return; }
+    if (_is(e,"showShortcuts"))  { e.preventDefault(); showShortcutsModal(); return; }
+    if (_is(e,"startTour"))      { e.preventDefault(); startTour(); return; }
+    if (_is(e,"fitAll"))         { e.preventDefault(); fitAll(); return; }
+    if (_is(e,"zoomIn"))         { e.preventDefault(); adjustZoom(1.2); return; }
+    if (_is(e,"zoomOut"))        { e.preventDefault(); adjustZoom(1/1.2); return; }
+    if (_is(e,"toolSelect"))     { setTool("select"); setActiveTool("select"); return; }
+    if (_is(e,"toolHand"))       { setTool("hand");   setActiveTool("hand");   return; }
+    if (_is(e,"toolText"))       { document.querySelector(".tool-btn[data-tool='text']")?.click(); return; }
+    if (_is(e,"escape"))         { canvas.discardActiveObject(); canvas.renderAll(); endTour(); return; }
+
+    // ── Delete ───────────────────────────────────────────────
+    if (_is(e,"deleteSelected")) {
+      const obj = canvas.getActiveObject(); if (!obj) return;
       const d = obj.data || {};
       if (["frame-overlay","slot-placeholder","slot-label","artboard-bg"].includes(d.type)) return;
       canvas.remove(obj); canvas.discardActiveObject(); canvas.renderAll();
-      pushUndo(); scheduleAutosave();
+      pushUndo(); scheduleAutosave(); return;
     }
-    switch (e.key.toLowerCase()) {
-      case "v": setTool("select"); setActiveTool("select"); break;
-      case "h": setTool("hand");   setActiveTool("hand");   break;
-      case "t": document.querySelector(".tool-btn[data-tool='text']")?.click(); break;
-      case "f": fitAll(); break;
-      case "+": case "=": adjustZoom(1.2); break;
-      case "-": adjustZoom(1/1.2); break;
+
+    // ── Arrow nudge ──────────────────────────────────────────
+    const obj = canvas.getActiveObject();
+    if (obj) {
+      let dx = 0, dy = 0;
+      const big = 10, sm = 1;
+      if (_is(e,"nudgeLeft"))    { dx = -sm; } else if (_is(e,"nudgeLeft10"))  { dx = -big; }
+      if (_is(e,"nudgeRight"))   { dx =  sm; } else if (_is(e,"nudgeRight10")) { dx =  big; }
+      if (_is(e,"nudgeUp"))      { dy = -sm; } else if (_is(e,"nudgeUp10"))    { dy = -big; }
+      if (_is(e,"nudgeDown"))    { dy =  sm; } else if (_is(e,"nudgeDown10"))  { dy =  big; }
+      if (dx !== 0 || dy !== 0) {
+        e.preventDefault();
+        obj.set({ left: obj.left + dx, top: obj.top + dy });
+        obj.setCoords(); canvas.renderAll(); scheduleAutosave(); return;
+      }
     }
-    // Number keys 1-9 → jump to artboard
+
+    // ── Number keys 1–9 → jump to artboard ──────────────────
     const n = parseInt(e.key);
-    if (!isNaN(n) && n >= 1) {
+    if (!isNaN(n) && n >= 1 && !(e.ctrlKey || e.metaKey)) {
       const ab = window.ARTBOARDS[n - 1];
       if (ab) { activateArtboard(ab.id); scrollToArtboard(ab.id); }
     }
   });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// SHORTCUTS MODAL
+// ─────────────────────────────────────────────────────────────────
+let _scRecording = null; // { id, el } currently recording
+
+function showShortcutsModal() {
+  _loadShortcuts();
+  const body = document.getElementById("scModalBody");
+  if (!body) return;
+
+  // Group by category
+  const cats = [...new Set(SHORTCUT_DEFS.map(d => d.cat))];
+  body.innerHTML = cats.map(cat => {
+    const rows = SHORTCUT_DEFS.filter(d => d.cat === cat).map(d => `
+      <div class="sc-row">
+        <span class="sc-label">${d.label}</span>
+        <span class="sc-key" data-sc-id="${d.id}" title="Click to change">${_fmtKey(_shortcuts[d.id] || d.def)}</span>
+      </div>`).join("");
+    return `<div class="sc-category">${cat}</div>${rows}`;
+  }).join("");
+
+  // Bind key-edit clicks
+  body.querySelectorAll(".sc-key").forEach(el => {
+    el.addEventListener("click", () => {
+      if (_scRecording) {
+        _scRecording.el.classList.remove("recording");
+        _scRecording.el.textContent = _fmtKey(_shortcuts[_scRecording.id]);
+        if (_scRecording.el === el) { _scRecording = null; return; }
+      }
+      _scRecording = { id: el.dataset.scId, el };
+      el.classList.add("recording");
+      el.textContent = "Press key…";
+    });
+  });
+
+  document.getElementById("scModal").style.display = "flex";
+}
+
+function _scKeyListener(e) {
+  if (!_scRecording) return;
+  e.preventDefault(); e.stopPropagation();
+  const key = _normalizeKey(e);
+  if (key === "escape") {
+    _scRecording.el.classList.remove("recording");
+    _scRecording.el.textContent = _fmtKey(_shortcuts[_scRecording.id]);
+    _scRecording = null; return;
+  }
+  // Ignore bare modifier keys
+  if (["ctrl","shift","alt","meta"].includes(key)) return;
+  _shortcuts[_scRecording.id] = key;
+  _scRecording.el.classList.remove("recording");
+  _scRecording.el.textContent = _fmtKey(key);
+  _scRecording = null;
+  _saveShortcuts();
+}
+
+function bindShortcutsModal() {
+  document.addEventListener("keydown", _scKeyListener, true); // capture phase
+
+  document.getElementById("scModalClose")?.addEventListener("click", () => {
+    _scRecording = null;
+    document.getElementById("scModal").style.display = "none";
+  });
+  document.getElementById("scDone")?.addEventListener("click", () => {
+    _scRecording = null;
+    document.getElementById("scModal").style.display = "none";
+  });
+  document.getElementById("scResetAll")?.addEventListener("click", () => {
+    SHORTCUT_DEFS.forEach(d => { _shortcuts[d.id] = d.def; });
+    _saveShortcuts();
+    showShortcutsModal(); // re-render
+    notify("All shortcuts reset to defaults", "info");
+  });
+  document.getElementById("btnShortcuts")?.addEventListener("click", showShortcutsModal);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GUIDED TOUR
+// ─────────────────────────────────────────────────────────────────
+const TOUR_STEPS = [
+  { sel: null,                    title: "Welcome to Daily Darshan Editor 🙏",
+    desc: "This quick tour will walk you through every feature. Use Next/Prev to navigate, or Skip to close. You can restart the tour anytime with the ? button." },
+  { sel: ".editor-topbar",        title: "Top Bar",
+    desc: "The top bar holds all global controls — navigation, undo/redo, zoom, save, export, and settings. Everything you need is one click away." },
+  { sel: "#btnUndo",              title: "Undo & Redo",
+    desc: "Undo your last action with Ctrl+Z. Redo with Ctrl+Y. Up to 40 steps of history are kept per session." },
+  { sel: "#btnZoomOut",           title: "Zoom Controls",
+    desc: "Zoom in/out with + / − or the buttons. Press F to fit all frames in view. Press ⊙ (or Ctrl+0) to jump back to your active frame from anywhere." },
+  { sel: "#btnSave",              title: "Auto-Save & Manual Save",
+    desc: "Changes are auto-saved 2 seconds after your last edit — just like Excel. The status indicator shows Saving… / Saved ✓. Press Ctrl+S for an instant manual save." },
+  { sel: "#btnExport",            title: "Export PNG",
+    desc: "Export the active frame as a full-resolution PNG at the frame's native pixel size (e.g. 2208×2208). The image is rendered client-side at maximum quality." },
+  { sel: "#btnExportAll",         title: "Export All Frames",
+    desc: "Export every frame that has at least one photo. On Chrome/Edge you pick a folder once and all PNGs save silently. On other browsers they download individually." },
+  { sel: "#btnSettingsExport",    title: "Export Settings",
+    desc: "Export everything — all photos (as base64), text, color adjustments, blend modes, and text panel defaults — as a single JSON file you can share with another device or user." },
+  { sel: "#btnSettingsImport",    title: "Import Settings",
+    desc: "Import a settings JSON exported from another device. Photos are automatically uploaded to this server, so the session is fully portable between machines." },
+  { sel: ".tool-strip",           title: "Tool Strip",
+    desc: "Three tools: Select (V) to move/resize objects, Hand (H) to pan the canvas, and Text (T) to add text. Hover any tool icon to see its shortcut." },
+  { sel: ".artboard-switcher",    title: "Frame Tabs",
+    desc: "Switch between artboard frames here. Press number keys 1–9 to jump instantly. The active frame is highlighted — all edits apply to it." },
+  { sel: "#slotsPanel",           title: "Photo Slots",
+    desc: "Each frame has one or more photo slots. Click a slot thumbnail or the + placeholder on the canvas to upload a photo. Related slots across L/R frames auto-sync." },
+  { sel: "#colorSection",         title: "Color Adjustments",
+    desc: "Select a photo then adjust brightness, contrast, saturation, hue, blur, noise, and RGB gamma. Use ✦ Auto Correct for one-click AI color fixing. Effects: B&W, Sepia, Vintage, Sharpen, and more." },
+  { sel: "#blendControls",        title: "Blend & Opacity",
+    desc: "Control a photo's opacity (0–100%) and blending mode (Normal, Multiply, Screen, Overlay, etc.) per slot. Great for layered artistic effects." },
+  { sel: "#transformSection",     title: "Transform Panel",
+    desc: "Precisely control X, Y position, W/H size, and rotation angle of the selected object. Use the ↔ ↕ buttons to flip horizontally or vertically. Arrow keys nudge by 1px; Shift+Arrow nudges by 10px." },
+  { sel: ".text-presets",         title: "Add Text",
+    desc: "Add the Darshan date or title as preset text with one click, or use + Add Text for custom text. Choose from English, Hindi (हिंदी), or Gujarati (ગુજરાતી) fonts. The preview bar shows the font live." },
+  { sel: "#mainCanvas",           title: "Infinite Canvas",
+    desc: "All frames sit on an infinite canvas. Pan by holding H and dragging, or use middle-click drag. Zoom with scroll wheel. Each frame renders at its exact native resolution on export." },
+  { sel: "#artboardList",         title: "Artboards Panel",
+    desc: "See all frames at a glance on the right. Click any frame to activate it. The active frame is highlighted." },
+  { sel: "#layersList",           title: "Layers Panel",
+    desc: "All objects in the active frame are listed here — photos, text overlays, and the frame image. Click ↻ to refresh. Use the delete key to remove the selected layer." },
+  { sel: "#btnShortcuts",         title: "Keyboard Shortcuts ⌨",
+    desc: "View and customise every keyboard shortcut. Click any shortcut badge to record a new key combo. Changes are saved instantly to your browser. Press Ctrl+/ to open anytime." },
+  { sel: "#btnTour",              title: "Restart Tour",
+    desc: "That's it! You've seen every feature. Click the ? button in the header anytime to restart this tour. Happy editing! 🙏 Jay Swaminarayan." },
+];
+
+let _tourStep = 0;
+
+function startTour() {
+  _tourStep = 0;
+  document.getElementById("tourOverlay").style.display = "block";
+  _renderTourStep();
+}
+function endTour() {
+  document.getElementById("tourOverlay").style.display  = "none";
+  document.getElementById("tourSpotlight").style.display = "none";
+  document.getElementById("tourCard").style.display     = "none";
+}
+
+function _renderTourStep() {
+  const steps    = TOUR_STEPS;
+  const step     = steps[_tourStep];
+  const total    = steps.length;
+  const spotlight = document.getElementById("tourSpotlight");
+  const card      = document.getElementById("tourCard");
+
+  // Spotlight target element
+  if (step.sel) {
+    const el = document.querySelector(step.sel);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      const PAD = 6;
+      spotlight.style.cssText = `display:block;top:${r.top-PAD}px;left:${r.left-PAD}px;width:${r.width+PAD*2}px;height:${r.height+PAD*2}px`;
+    } else {
+      spotlight.style.display = "none";
+    }
+  } else {
+    spotlight.style.display = "none";
+  }
+
+  // Card content
+  document.getElementById("tourBadge").textContent = `${_tourStep+1} / ${total}`;
+  document.getElementById("tourTitle").textContent = step.title;
+  document.getElementById("tourDesc").textContent  = step.desc;
+
+  // Dots
+  const dotsEl = document.getElementById("tourDots");
+  dotsEl.innerHTML = steps.map((_,i) =>
+    `<div class="tour-dot${i===_tourStep?" active":""}"></div>`).join("");
+
+  // Prev/Next labels
+  const prevBtn = document.getElementById("tourPrev");
+  const nextBtn = document.getElementById("tourNext");
+  prevBtn.style.visibility = _tourStep === 0 ? "hidden" : "visible";
+  nextBtn.textContent = _tourStep === total-1 ? "Finish ✓" : "Next →";
+
+  // Position card: prefer below the spotlight, flip if near bottom
+  card.style.display = "block";
+  const cardW = 300, cardH = 220;
+  let cx, cy;
+  if (step.sel) {
+    const el = document.querySelector(step.sel);
+    if (el) {
+      const r   = el.getBoundingClientRect();
+      cx = Math.min(r.left + r.width/2 - cardW/2, window.innerWidth - cardW - 16);
+      cx = Math.max(cx, 16);
+      cy = r.bottom + 14;
+      if (cy + cardH > window.innerHeight - 20) cy = r.top - cardH - 14;
+      if (cy < 10) cy = window.innerHeight/2 - cardH/2;
+    }
+  }
+  if (!cx) { cx = window.innerWidth/2 - cardW/2; cy = window.innerHeight/2 - cardH/2; }
+  card.style.left = `${Math.round(cx)}px`;
+  card.style.top  = `${Math.round(cy)}px`;
+}
+
+function bindTour() {
+  document.getElementById("btnTour")?.addEventListener("click", startTour);
+  document.getElementById("tourSkip")?.addEventListener("click", endTour);
+  document.getElementById("tourPrev")?.addEventListener("click", () => {
+    if (_tourStep > 0) { _tourStep--; _renderTourStep(); }
+  });
+  document.getElementById("tourNext")?.addEventListener("click", () => {
+    if (_tourStep < TOUR_STEPS.length - 1) { _tourStep++; _renderTourStep(); }
+    else endTour();
+  });
+  // Click on overlay (outside card/spotlight) closes tour
+  document.getElementById("tourOverlay")?.addEventListener("click", endTour);
 }
 function isTyping() {
   const a = canvas.getActiveObject();
@@ -2349,6 +2648,69 @@ function updateHud(obj) {
 function hideHud() {
   const hud = document.getElementById("adjustHud");
   if (hud) hud.style.display = "none";
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GLOBAL TOOLTIP  (fixed-position singleton driven by data-tip)
+// ─────────────────────────────────────────────────────────────────
+function initGlobalTooltip() {
+  const tip = document.getElementById("globalTooltip");
+  if (!tip) return;
+
+  let hideTimer = null;
+
+  function showTip(el) {
+    clearTimeout(hideTimer);
+    const label  = el.dataset.tip    || "";
+    const keyHint = el.dataset.tipKey || "";
+    if (!label) return;
+
+    tip.innerHTML = label + (keyHint ? `<kbd>${keyHint}</kbd>` : "");
+    tip.classList.remove("visible");
+
+    // Measure size off-screen before positioning
+    tip.style.visibility = "hidden";
+    tip.style.display    = "flex";
+    const tipH  = tip.offsetHeight || 32;
+    const tipWA = tip.offsetWidth  || 100;
+    tip.style.display    = "";
+    tip.style.visibility = "";
+
+    // Position below (or above if near bottom edge)
+    const rect = el.getBoundingClientRect();
+    const gap  = 7;
+    let left = rect.left + (rect.width / 2) - (tipWA / 2);
+    let top  = rect.bottom + gap;
+
+    // Clamp horizontally
+    left = Math.max(6, Math.min(left, window.innerWidth - tipWA - 6));
+
+    // If below screen bottom, place above
+    if (top + tipH > window.innerHeight - 10) {
+      top = rect.top - tipH - gap;
+    }
+
+    tip.style.left = left + "px";
+    tip.style.top  = top  + "px";
+    tip.classList.add("visible");
+  }
+
+  function hideTip() {
+    hideTimer = setTimeout(() => tip.classList.remove("visible"), 80);
+  }
+
+  // Delegate to all current + future [data-tip] elements
+  document.addEventListener("mouseover", e => {
+    const el = e.target.closest("[data-tip]");
+    if (el) showTip(el);
+  });
+  document.addEventListener("mouseout", e => {
+    const el = e.target.closest("[data-tip]");
+    if (el) hideTip();
+  });
+  // Hide on scroll / resize to avoid stale positioning
+  document.addEventListener("scroll", hideTip, true);
+  window.addEventListener("resize", hideTip);
 }
 
 // ─────────────────────────────────────────────────────────────────
