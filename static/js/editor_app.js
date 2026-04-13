@@ -199,6 +199,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindKeyboard();
   bindAutoTextSync();
   initGlobalTooltip();
+  initGuideDrag();
   activateArtboard(window.ARTBOARDS[0].id);
   renderArtboardListPanel();
   // Fit all artboards into view on startup
@@ -1468,18 +1469,33 @@ function bindTextControls() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// SLOT CENTER GUIDES + SMART SNAP GUIDES
+// SLOT GUIDES — draggable crosshairs + smart snap
 // ─────────────────────────────────────────────────────────────────
 // Colors
-const GUIDE_CENTER_C = "rgba(0, 180, 255, 0.55)";   // soft cyan — permanent center lines
-const GUIDE_SNAP_C   = "#e040fb";                    // magenta — smart snap lines
-const GUIDE_SNAP_EDGE_C = "#ff1744";                 // red    — edge snap
-const SNAP_THRESH    = 8;   // px distance to show snap guide
+const GUIDE_CENTER_C    = "rgba(0, 180, 255, 0.60)";  // cyan  — idle
+const GUIDE_ACTIVE_C    = "rgba(0, 220, 255, 1.0)";   // bright cyan — being dragged
+const GUIDE_SNAP_C      = "#e040fb";                   // magenta — snap
+const GUIDE_SNAP_EDGE_C = "#ff1744";                   // red    — edge snap
+const SNAP_THRESH       = 8;   // px to trigger snap
+const GUIDE_HIT_THRESH  = 7;   // px to start dragging a guide
 
-// Accumulated smart guides from the current drag
-let _smartGuides = [];
+// Per-slot guide positions stored as fractions of slot W/H (0 = start, 1 = end).
+// Default {vFrac:0.5, hFrac:0.5} = dead centre.
+const _guidePos = {};  // key: "frameId:slotIndex"
 
-// Convert a slot's world-space rect into screen-space coordinates
+function _guideKey(frameId, slotIndex) { return `${frameId}:${slotIndex}`; }
+function _getGuidePos(frameId, slotIndex) {
+  const k = _guideKey(frameId, slotIndex);
+  if (!_guidePos[k]) _guidePos[k] = { vFrac: 0.5, hFrac: 0.5 };
+  return _guidePos[k];
+}
+
+// Accumulated smart snap guides from the current photo drag
+let _smartGuides  = [];
+// Currently-dragged guide: { state, slot, axis:"v"|"h" } or null
+let _draggingGuide = null;
+
+// Convert a slot's world-space rect → screen-space coordinates
 function _slotScreenRect(state, slot) {
   const [zoom, , , , tx, ty] = canvas.viewportTransform;
   const s = state.scale;
@@ -1487,47 +1503,93 @@ function _slotScreenRect(state, slot) {
   const T  = (state.oy + slot.y * s) * zoom + ty;
   const R  = L + slot.w * s * zoom;
   const B  = T + slot.h * s * zoom;
-  const CX = (L + R) / 2;
-  const CY = (T + B) / 2;
-  return { L, T, R, B, CX, CY };
+  return { L, T, R, B };
 }
 
-// Draw permanent thin center-crosshair on every slot that has a photo
+// Hit-test (screen px) → { state, slot, axis } or null
+function _hitTestGuide(sx, sy) {
+  for (const state of Object.values(ArtboardMap)) {
+    for (const slot of (state.config.slots || [])) {
+      if (!state.slotImages[slot.index]) continue;
+      const { L, T, R, B } = _slotScreenRect(state, slot);
+      // Coarse bounding box check first
+      if (sx < L - GUIDE_HIT_THRESH || sx > R + GUIDE_HIT_THRESH) continue;
+      if (sy < T - GUIDE_HIT_THRESH || sy > B + GUIDE_HIT_THRESH) continue;
+
+      const pos = _getGuidePos(state.frameId, slot.index);
+      const vx  = L + (R - L) * pos.vFrac;
+      const hy  = T + (B - T) * pos.hFrac;
+
+      // Vertical guide: sx close to vx, sy inside slot
+      if (Math.abs(sx - vx) <= GUIDE_HIT_THRESH && sy >= T - 2 && sy <= B + 2) {
+        return { state, slot, axis: "v" };
+      }
+      // Horizontal guide: sy close to hy, sx inside slot
+      if (Math.abs(sy - hy) <= GUIDE_HIT_THRESH && sx >= L - 2 && sx <= R + 2) {
+        return { state, slot, axis: "h" };
+      }
+    }
+  }
+  return null;
+}
+
+// Draw all guides onto the upper canvas overlay
 function _drawSlotCenterGuides() {
   const ctx = canvas.upperCanvasEl.getContext("2d");
   const W   = canvas.upperCanvasEl.width;
   const H   = canvas.upperCanvasEl.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Draw center guides for every slot with a loaded photo
   Object.values(ArtboardMap).forEach(state => {
     (state.config.slots || []).forEach(slot => {
-      if (!state.slotImages[slot.index]) return;   // empty slot — skip
-      const { L, T, R, B, CX, CY } = _slotScreenRect(state, slot);
+      if (!state.slotImages[slot.index]) return;
+
+      const { L, T, R, B } = _slotScreenRect(state, slot);
+      const pos = _getGuidePos(state.frameId, slot.index);
+      const vx  = L + (R - L) * pos.vFrac;
+      const hy  = T + (B - T) * pos.hFrac;
+
+      const dragV = _draggingGuide &&
+        _draggingGuide.state === state &&
+        _draggingGuide.slot  === slot  &&
+        _draggingGuide.axis  === "v";
+      const dragH = _draggingGuide &&
+        _draggingGuide.state === state &&
+        _draggingGuide.slot  === slot  &&
+        _draggingGuide.axis  === "h";
 
       ctx.save();
-      ctx.strokeStyle = GUIDE_CENTER_C;
-      ctx.lineWidth   = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.globalAlpha = 1;
+      ctx.setLineDash([5, 4]);
 
-      // Vertical center line (scoped to slot height)
+      // ── Vertical guide ──
+      ctx.strokeStyle = dragV ? GUIDE_ACTIVE_C : GUIDE_CENTER_C;
+      ctx.lineWidth   = dragV ? 1.5 : 1;
       ctx.beginPath();
-      ctx.moveTo(CX, T);
-      ctx.lineTo(CX, B);
+      ctx.moveTo(vx, T);
+      ctx.lineTo(vx, B);
       ctx.stroke();
 
-      // Horizontal center line (scoped to slot width)
+      // ── Horizontal guide ──
+      ctx.strokeStyle = dragH ? GUIDE_ACTIVE_C : GUIDE_CENTER_C;
+      ctx.lineWidth   = dragH ? 1.5 : 1;
       ctx.beginPath();
-      ctx.moveTo(L, CY);
-      ctx.lineTo(R, CY);
+      ctx.moveTo(L, hy);
+      ctx.lineTo(R, hy);
       ctx.stroke();
+
+      // ── Drag handle dots at intersection ──
+      ctx.setLineDash([]);
+      ctx.fillStyle   = dragV || dragH ? GUIDE_ACTIVE_C : GUIDE_CENTER_C;
+      ctx.globalAlpha = dragV || dragH ? 1.0 : 0.7;
+      ctx.beginPath();
+      ctx.arc(vx, hy, dragV || dragH ? 4 : 3, 0, Math.PI * 2);
+      ctx.fill();
 
       ctx.restore();
     });
   });
 
-  // Draw smart snap guides on top (appear during drag)
+  // ── Smart snap guides (shown while dragging a photo) ──
   if (_smartGuides.length > 0) {
     _smartGuides.forEach(g => {
       const { L, T, R, B } = _slotScreenRect(g.state, g.slot);
@@ -1537,17 +1599,74 @@ function _drawSlotCenterGuides() {
       ctx.setLineDash([]);
       ctx.globalAlpha = 0.9;
       ctx.beginPath();
-      if (g.axis === "v") {
-        ctx.moveTo(g.x, T);
-        ctx.lineTo(g.x, B);
-      } else {
-        ctx.moveTo(L, g.y);
-        ctx.lineTo(R, g.y);
-      }
+      if (g.axis === "v") { ctx.moveTo(g.x, T); ctx.lineTo(g.x, B); }
+      else                { ctx.moveTo(L, g.y); ctx.lineTo(R, g.y); }
       ctx.stroke();
       ctx.restore();
     });
   }
+}
+
+// Initialise guide drag on the upper canvas element
+function initGuideDrag() {
+  const el = canvas.upperCanvasEl;
+
+  // mousedown in capture phase — intercept before Fabric sees it
+  el.addEventListener("mousedown", e => {
+    if (e.button !== 0) return;
+    const hit = _hitTestGuide(e.offsetX, e.offsetY);
+    if (!hit) return;
+    e.stopPropagation();
+    e.preventDefault();
+    _draggingGuide = hit;
+    el.style.cursor = hit.axis === "v" ? "col-resize" : "row-resize";
+    canvas.renderAll();
+  }, true);
+
+  // mousemove on window so drag works even outside the canvas
+  window.addEventListener("mousemove", e => {
+    if (!_draggingGuide) return;
+    const rect = el.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const { state, slot, axis } = _draggingGuide;
+    const { L, T, R, B } = _slotScreenRect(state, slot);
+    const pos = _getGuidePos(state.frameId, slot.index);
+
+    if (axis === "v") {
+      pos.vFrac = Math.max(0.02, Math.min(0.98, (sx - L) / (R - L)));
+    } else {
+      pos.hFrac = Math.max(0.02, Math.min(0.98, (sy - T) / (B - T)));
+    }
+    canvas.renderAll();
+  });
+
+  // mouseup — end drag
+  window.addEventListener("mouseup", () => {
+    if (!_draggingGuide) return;
+    _draggingGuide = null;
+    el.style.cursor = "";
+    canvas.renderAll();
+  });
+
+  // Cursor hint on hover (bubble phase — only changes cursor, doesn't block Fabric)
+  el.addEventListener("mousemove", e => {
+    if (_draggingGuide) return;
+    const hit = _hitTestGuide(e.offsetX, e.offsetY);
+    el.style.cursor = hit ? (hit.axis === "v" ? "col-resize" : "row-resize") : "";
+  });
+
+  // Double-click on guide resets it to centre
+  el.addEventListener("dblclick", e => {
+    const hit = _hitTestGuide(e.offsetX, e.offsetY);
+    if (!hit) return;
+    e.stopPropagation();
+    const pos = _getGuidePos(hit.state.frameId, hit.slot.index);
+    if (hit.axis === "v") pos.vFrac = 0.5;
+    else                  pos.hFrac = 0.5;
+    canvas.renderAll();
+    notify("Guide reset to centre", "info");
+  }, true);
 }
 
 // Compute smart snap guides while dragging a slot-image
@@ -1566,41 +1685,32 @@ function _onObjectMoving(e) {
 
   const guides = [];
 
-  // Check against every slot in the same artboard
   (state.config.slots || []).forEach(sl => {
-    const { L, T, R, B, CX, CY } = _slotScreenRect(state, sl);
+    const { L, T, R, B } = _slotScreenRect(state, sl);
+    const pos = _getGuidePos(state.frameId, sl.index);
+    const CX  = L + (R - L) * pos.vFrac;
+    const CY  = T + (B - T) * pos.hFrac;
 
-    // Snap to slot horizontal center (vertical line)
+    // Snap to vertical guide line
     if (Math.abs(objCX - CX) < SNAP_THRESH) {
       guides.push({ axis: "v", x: CX, state, slot: sl, isEdge: false });
-      // Snap object
-      const newLeft = (CX - tx) / zoom;
-      obj.set("left", Math.round(newLeft));
+      obj.set("left", Math.round((CX - tx) / zoom));
       obj.setCoords();
     }
-    // Snap to slot vertical center (horizontal line)
+    // Snap to horizontal guide line
     if (Math.abs(objCY - CY) < SNAP_THRESH) {
       guides.push({ axis: "h", y: CY, state, slot: sl, isEdge: false });
-      const newTop = (CY - ty) / zoom;
-      obj.set("top", Math.round(newTop));
+      obj.set("top", Math.round((CY - ty) / zoom));
       obj.setCoords();
     }
     // Snap to slot left edge
-    if (Math.abs(objCX - L) < SNAP_THRESH) {
-      guides.push({ axis: "v", x: L, state, slot: sl, isEdge: true });
-    }
+    if (Math.abs(objCX - L) < SNAP_THRESH) guides.push({ axis: "v", x: L, state, slot: sl, isEdge: true });
     // Snap to slot right edge
-    if (Math.abs(objCX - R) < SNAP_THRESH) {
-      guides.push({ axis: "v", x: R, state, slot: sl, isEdge: true });
-    }
+    if (Math.abs(objCX - R) < SNAP_THRESH) guides.push({ axis: "v", x: R, state, slot: sl, isEdge: true });
     // Snap to slot top edge
-    if (Math.abs(objCY - T) < SNAP_THRESH) {
-      guides.push({ axis: "h", y: T, state, slot: sl, isEdge: true });
-    }
+    if (Math.abs(objCY - T) < SNAP_THRESH) guides.push({ axis: "h", y: T, state, slot: sl, isEdge: true });
     // Snap to slot bottom edge
-    if (Math.abs(objCY - B) < SNAP_THRESH) {
-      guides.push({ axis: "h", y: B, state, slot: sl, isEdge: true });
-    }
+    if (Math.abs(objCY - B) < SNAP_THRESH) guides.push({ axis: "h", y: B, state, slot: sl, isEdge: true });
   });
 
   _smartGuides = guides;
