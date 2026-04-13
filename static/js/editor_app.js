@@ -281,6 +281,14 @@ function initCanvas() {
   canvas.on("object:added",      () => refreshLayersPanel());
   canvas.on("object:removed",    () => refreshLayersPanel());
 
+  // ── Per-slot center crosshair guides (drawn after every render) ──
+  canvas.on("after:render", _drawSlotCenterGuides);
+
+  // ── Smart snap guides (appear while dragging) ─────────────────
+  canvas.on("object:moving", _onObjectMoving);
+  canvas.on("object:modified", () => { _smartGuides = []; canvas.renderAll(); });
+  canvas.on("mouse:up", () => { _smartGuides = []; });
+
   // Artboard background rects (drawn first so they sit below everything)
   Object.values(ArtboardMap).forEach(ab => {
     const bg = new fabric.Rect({
@@ -1457,6 +1465,145 @@ function bindTextControls() {
       canvas.renderAll(); scheduleAutosave();
     });
   });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// SLOT CENTER GUIDES + SMART SNAP GUIDES
+// ─────────────────────────────────────────────────────────────────
+// Colors
+const GUIDE_CENTER_C = "rgba(0, 180, 255, 0.55)";   // soft cyan — permanent center lines
+const GUIDE_SNAP_C   = "#e040fb";                    // magenta — smart snap lines
+const GUIDE_SNAP_EDGE_C = "#ff1744";                 // red    — edge snap
+const SNAP_THRESH    = 8;   // px distance to show snap guide
+
+// Accumulated smart guides from the current drag
+let _smartGuides = [];
+
+// Convert a slot's world-space rect into screen-space coordinates
+function _slotScreenRect(state, slot) {
+  const [zoom, , , , tx, ty] = canvas.viewportTransform;
+  const s = state.scale;
+  const L  = (state.ox + slot.x * s) * zoom + tx;
+  const T  = (state.oy + slot.y * s) * zoom + ty;
+  const R  = L + slot.w * s * zoom;
+  const B  = T + slot.h * s * zoom;
+  const CX = (L + R) / 2;
+  const CY = (T + B) / 2;
+  return { L, T, R, B, CX, CY };
+}
+
+// Draw permanent thin center-crosshair on every slot that has a photo
+function _drawSlotCenterGuides() {
+  const ctx = canvas.upperCanvasEl.getContext("2d");
+  const W   = canvas.upperCanvasEl.width;
+  const H   = canvas.upperCanvasEl.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw center guides for every slot with a loaded photo
+  Object.values(ArtboardMap).forEach(state => {
+    (state.config.slots || []).forEach(slot => {
+      if (!state.slotImages[slot.index]) return;   // empty slot — skip
+      const { L, T, R, B, CX, CY } = _slotScreenRect(state, slot);
+
+      ctx.save();
+      ctx.strokeStyle = GUIDE_CENTER_C;
+      ctx.lineWidth   = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.globalAlpha = 1;
+
+      // Vertical center line (scoped to slot height)
+      ctx.beginPath();
+      ctx.moveTo(CX, T);
+      ctx.lineTo(CX, B);
+      ctx.stroke();
+
+      // Horizontal center line (scoped to slot width)
+      ctx.beginPath();
+      ctx.moveTo(L, CY);
+      ctx.lineTo(R, CY);
+      ctx.stroke();
+
+      ctx.restore();
+    });
+  });
+
+  // Draw smart snap guides on top (appear during drag)
+  if (_smartGuides.length > 0) {
+    _smartGuides.forEach(g => {
+      const { L, T, R, B } = _slotScreenRect(g.state, g.slot);
+      ctx.save();
+      ctx.strokeStyle = g.isEdge ? GUIDE_SNAP_EDGE_C : GUIDE_SNAP_C;
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      if (g.axis === "v") {
+        ctx.moveTo(g.x, T);
+        ctx.lineTo(g.x, B);
+      } else {
+        ctx.moveTo(L, g.y);
+        ctx.lineTo(R, g.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+}
+
+// Compute smart snap guides while dragging a slot-image
+function _onObjectMoving(e) {
+  const obj = e.target;
+  if (!obj) return;
+  const sb = getSlotForImageObject(obj);
+  if (!sb) return;
+
+  const { state } = sb;
+  const [zoom, , , , tx, ty] = canvas.viewportTransform;
+
+  // Object center in screen space
+  const objCX = obj.getCenterPoint().x * zoom + tx;
+  const objCY = obj.getCenterPoint().y * zoom + ty;
+
+  const guides = [];
+
+  // Check against every slot in the same artboard
+  (state.config.slots || []).forEach(sl => {
+    const { L, T, R, B, CX, CY } = _slotScreenRect(state, sl);
+
+    // Snap to slot horizontal center (vertical line)
+    if (Math.abs(objCX - CX) < SNAP_THRESH) {
+      guides.push({ axis: "v", x: CX, state, slot: sl, isEdge: false });
+      // Snap object
+      const newLeft = (CX - tx) / zoom;
+      obj.set("left", Math.round(newLeft));
+      obj.setCoords();
+    }
+    // Snap to slot vertical center (horizontal line)
+    if (Math.abs(objCY - CY) < SNAP_THRESH) {
+      guides.push({ axis: "h", y: CY, state, slot: sl, isEdge: false });
+      const newTop = (CY - ty) / zoom;
+      obj.set("top", Math.round(newTop));
+      obj.setCoords();
+    }
+    // Snap to slot left edge
+    if (Math.abs(objCX - L) < SNAP_THRESH) {
+      guides.push({ axis: "v", x: L, state, slot: sl, isEdge: true });
+    }
+    // Snap to slot right edge
+    if (Math.abs(objCX - R) < SNAP_THRESH) {
+      guides.push({ axis: "v", x: R, state, slot: sl, isEdge: true });
+    }
+    // Snap to slot top edge
+    if (Math.abs(objCY - T) < SNAP_THRESH) {
+      guides.push({ axis: "h", y: T, state, slot: sl, isEdge: true });
+    }
+    // Snap to slot bottom edge
+    if (Math.abs(objCY - B) < SNAP_THRESH) {
+      guides.push({ axis: "h", y: B, state, slot: sl, isEdge: true });
+    }
+  });
+
+  _smartGuides = guides;
 }
 
 // ─────────────────────────────────────────────────────────────────
