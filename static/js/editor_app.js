@@ -1664,7 +1664,7 @@ function restoreAll(snapStr) {
 // SAVE & EXPORT
 // ─────────────────────────────────────────────────────────────────
 async function saveSession() {
-  setStatus("Saving…");
+  setStatus("Saving…", "saving");
   // Build artboards map: {frameId → canvas_json_for_that_frame}
   const artboards = {};
   Object.values(ArtboardMap).forEach(ab => {
@@ -1685,10 +1685,10 @@ async function saveSession() {
     artboards,
   });
   if (r.success) {
-    setStatus("Saved ✓");
-    setTimeout(() => setStatus(""), 2500);
+    setStatus("All changes saved ✓", "saved");
+    setTimeout(() => setStatus("", ""), 3000);
   } else {
-    setStatus("Save failed");
+    setStatus("Save failed", "error");
     notify("Save failed: " + r.error, "error");
   }
 }
@@ -1868,9 +1868,16 @@ async function exportAll() {
   }
 }
 
+// Auto-save — triggers 2 s after the last change, just like Excel.
+// Shows "Saving…" immediately so the user knows a save is queued.
+const AUTOSAVE_DELAY = 2000; // ms
+
 function scheduleAutosave() {
   clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(saveSession, 15000);
+  setStatus("Unsaved changes…", "pending");
+  autosaveTimer = setTimeout(() => {
+    saveSession();
+  }, AUTOSAVE_DELAY);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2354,8 +2361,12 @@ function notify(msg, type = "info") {
   document.getElementById("notifications").appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
-function setStatus(msg) {
-  const el = document.getElementById("saveStatus"); if (el) el.textContent = msg;
+function setStatus(msg, state) {
+  // state: "pending" | "saving" | "saved" | "error" | ""
+  const el = document.getElementById("saveStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "save-status" + (state ? ` save-status--${state}` : "");
 }
 function showEl(id) { const e = document.getElementById(id); if (e) e.style.display = "block"; }
 function hideEl(id) { const e = document.getElementById(id); if (e) e.style.display = "none"; }

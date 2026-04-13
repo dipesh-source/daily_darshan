@@ -35,8 +35,14 @@
     </div>
 
     <div class="topbar-center">
-      <button class="topbar-btn" id="btnUndo"      title="Undo (Ctrl+Z)">↩</button>
-      <button class="topbar-btn" id="btnRedo"      title="Redo (Ctrl+Y)">↪</button>
+      <div class="topbar-tip-wrap">
+        <button class="topbar-btn" id="btnUndo">↩</button>
+        <div class="topbar-tooltip">Undo<kbd>Ctrl+Z</kbd></div>
+      </div>
+      <div class="topbar-tip-wrap">
+        <button class="topbar-btn" id="btnRedo">↪</button>
+        <div class="topbar-tooltip">Redo<kbd>Ctrl+Y</kbd></div>
+      </div>
       <div class="topbar-divider"></div>
       <button class="topbar-btn" id="btnZoomOut"   title="Zoom Out (-)">−</button>
       <span  class="zoom-display" id="zoomDisplay">100%</span>
@@ -58,7 +64,10 @@
       </div>
       <div class="topbar-divider"></div>
       <span class="save-status" id="saveStatus"></span>
-      <button class="topbar-btn-primary"       id="btnSave"         title="Save (Ctrl+S)">Save</button>
+      <div class="topbar-tip-wrap">
+        <button class="topbar-btn-primary" id="btnSave">Save</button>
+        <div class="topbar-tooltip topbar-tooltip--up">Manual save<kbd>Ctrl+S</kbd></div>
+      </div>
       <button class="topbar-btn-primary green"  id="btnExport"       title="Export active artboard (native resolution)">Export PNG</button>
       <button class="topbar-btn-primary green"  id="btnExportAll"    title="Export all frames with photos">Export All</button>
       <div class="topbar-divider"></div>
