@@ -23,6 +23,7 @@ const LABEL_HEIGHT   = 36;    // px above artboard for the name label
 const SLOT_IMAGE_BLEED_RATIO = 0.025;
 const SLOT_IMAGE_BLEED_MIN   = 10;
 const SLOT_IMAGE_BLEED_MAX   = 20;
+const FILTER_PREVIEW_DELAY = 32;
 
 function configureStableFilterBackend() {
   if (typeof fabric === "undefined") return;
@@ -606,7 +607,6 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
       hasControls:   true,
       hasBorders:    true,
       lockUniScaling: false,
-      objectCaching: false,
       data: { type: "slot-image", frameId, slotIndex, photoId, fileName: fileName || "", manualCrop: false },
     });
 
@@ -686,7 +686,6 @@ function normalizeSlotImageObject(state, slot, img) {
   if (!state || !slot || !img) return;
   img.set({
     clipPath: makeSlotClip(state, slot),
-    objectCaching: false,
     dirty: true,
   });
   ensureSlotImageCoverage(state, slot, img);
@@ -779,6 +778,39 @@ function defaultFilters() {
   };
 }
 
+let filterPreviewTimer = null;
+const pendingFilterPreviews = new Map();
+
+function slotFilterPreviewKey(frameId, slotIndex) {
+  return `${frameId}:${slotIndex}`;
+}
+
+function queueSlotFilterPreview(frameId, slotIndex) {
+  pendingFilterPreviews.set(slotFilterPreviewKey(frameId, slotIndex), { frameId, slotIndex });
+  if (filterPreviewTimer) return;
+  filterPreviewTimer = setTimeout(() => {
+    filterPreviewTimer = null;
+    const jobs = [...pendingFilterPreviews.values()];
+    pendingFilterPreviews.clear();
+    jobs.forEach(({ frameId: fid, slotIndex: sid }) => applyFiltersToSlot(fid, sid));
+  }, FILTER_PREVIEW_DELAY);
+}
+
+function flushSlotFilterPreview(frameId, slotIndex) {
+  pendingFilterPreviews.delete(slotFilterPreviewKey(frameId, slotIndex));
+  applyFiltersToSlot(frameId, slotIndex);
+}
+
+function slotFilterSignature(f) {
+  return [
+    f.brightness, f.contrast, f.saturation, f.hue,
+    f.blur, f.noise,
+    f.gamma_r, f.gamma_g, f.gamma_b,
+    f.grayscale, f.sepia, f.invert,
+    f.vintage, f.sharpen, f.polaroid, f.kodachrome,
+  ].join("|");
+}
+
 function applyFiltersToSlot(frameId, slotIndex) {
   const state = ArtboardMap[frameId];
   const img   = state?.slotImages[slotIndex];
@@ -802,25 +834,29 @@ function applyFiltersToSlot(frameId, slotIndex) {
     cropY: img.cropY || 0,
   };
 
-  const filters = [];
-  if (f.brightness !== 0) filters.push(new fabric.Image.filters.Brightness({ brightness: f.brightness }));
-  if (f.contrast   !== 0) filters.push(new fabric.Image.filters.Contrast({ contrast: f.contrast }));
-  if (f.saturation !== 0) filters.push(new fabric.Image.filters.Saturation({ saturation: f.saturation }));
-  if (f.hue        !== 0) filters.push(new fabric.Image.filters.HueRotation({ rotation: f.hue * (Math.PI / 180) }));
-  if (f.blur        > 0)  filters.push(new fabric.Image.filters.Blur({ blur: f.blur / 100 }));
-  if (f.noise       > 0)  filters.push(new fabric.Image.filters.Noise({ noise: f.noise }));
-  if (f.gamma_r !== 1 || f.gamma_g !== 1 || f.gamma_b !== 1)
-    filters.push(new fabric.Image.filters.Gamma({ gamma: [f.gamma_r, f.gamma_g, f.gamma_b] }));
-  if (f.grayscale)  filters.push(new fabric.Image.filters.Grayscale());
-  if (f.sepia)      filters.push(new fabric.Image.filters.Sepia());
-  if (f.invert)     filters.push(new fabric.Image.filters.Invert());
-  if (f.vintage)    filters.push(new fabric.Image.filters.Vintage());
-  if (f.polaroid)   filters.push(new fabric.Image.filters.Polaroid());
-  if (f.kodachrome) filters.push(new fabric.Image.filters.Kodachrome());
-  if (f.sharpen)    filters.push(new fabric.Image.filters.Convolute({ matrix: [0,-1,0,-1,5,-1,0,-1,0] }));
+  const signature = slotFilterSignature(f);
+  if (img._slotFilterSignature !== signature) {
+    const filters = [];
+    if (f.brightness !== 0) filters.push(new fabric.Image.filters.Brightness({ brightness: f.brightness }));
+    if (f.contrast   !== 0) filters.push(new fabric.Image.filters.Contrast({ contrast: f.contrast }));
+    if (f.saturation !== 0) filters.push(new fabric.Image.filters.Saturation({ saturation: f.saturation }));
+    if (f.hue        !== 0) filters.push(new fabric.Image.filters.HueRotation({ rotation: f.hue * (Math.PI / 180) }));
+    if (f.blur        > 0)  filters.push(new fabric.Image.filters.Blur({ blur: f.blur / 100 }));
+    if (f.noise       > 0)  filters.push(new fabric.Image.filters.Noise({ noise: f.noise }));
+    if (f.gamma_r !== 1 || f.gamma_g !== 1 || f.gamma_b !== 1)
+      filters.push(new fabric.Image.filters.Gamma({ gamma: [f.gamma_r, f.gamma_g, f.gamma_b] }));
+    if (f.grayscale)  filters.push(new fabric.Image.filters.Grayscale());
+    if (f.sepia)      filters.push(new fabric.Image.filters.Sepia());
+    if (f.invert)     filters.push(new fabric.Image.filters.Invert());
+    if (f.vintage)    filters.push(new fabric.Image.filters.Vintage());
+    if (f.polaroid)   filters.push(new fabric.Image.filters.Polaroid());
+    if (f.kodachrome) filters.push(new fabric.Image.filters.Kodachrome());
+    if (f.sharpen)    filters.push(new fabric.Image.filters.Convolute({ matrix: [0,-1,0,-1,5,-1,0,-1,0] }));
 
-  img.filters = filters;
-  img.applyFilters();
+    img.filters = filters;
+    img.applyFilters();
+    img._slotFilterSignature = signature;
+  }
   img.set({
     ...snap,
     opacity: f.opacity,
@@ -1228,20 +1264,30 @@ function syncTransformPanel(obj) {
 }
 
 function bindColorControls() {
+  const commitFilterChange = (frameId, slotIndex) => {
+    flushSlotFilterPreview(frameId, slotIndex);
+    pushUndo();
+    scheduleAutosave();
+  };
+
   function mkSlider(id, vid, toDisplay, setter) {
-    document.getElementById(id)?.addEventListener("input", () => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const sync = commit => {
       const obj = canvas.getActiveObject();
       if (!obj?.data) return;
       const { frameId, slotIndex } = obj.data;
       if (frameId == null || slotIndex == null) return;
       const f   = ArtboardMap[frameId]?.slotFilters[slotIndex];
       if (!f) return;
-      const val = parseFloat(document.getElementById(id).value);
+      const val = parseFloat(el.value);
       setter(f, val);
       document.getElementById(vid).textContent = toDisplay(val);
-      applyFiltersToSlot(frameId, slotIndex);
-      scheduleAutosave();
-    });
+      if (commit) commitFilterChange(frameId, slotIndex);
+      else queueSlotFilterPreview(frameId, slotIndex);
+    };
+    el.addEventListener("input",  () => sync(false));
+    el.addEventListener("change", () => sync(true));
   }
   mkSlider("fBrightness","fBrightness_val", v=>Math.round(v),     (f,v)=>f.brightness = v/100);
   mkSlider("fContrast",  "fContrast_val",   v=>Math.round(v),     (f,v)=>f.contrast   = v/100);
@@ -1261,8 +1307,7 @@ function bindColorControls() {
       const f = ArtboardMap[frameId]?.slotFilters[slotIndex];
       if (!f) return;
       f[id.replace("f","").toLowerCase()] = document.getElementById(id).checked;
-      applyFiltersToSlot(frameId, slotIndex);
-      scheduleAutosave();
+      commitFilterChange(frameId, slotIndex);
     });
   });
 
@@ -1344,28 +1389,36 @@ function bindColorControls() {
     ArtboardMap[frameId].slotFilters[slotIndex] = defaultFilters();
     syncColorPanel(frameId, slotIndex);
     syncBlendPanel(frameId, slotIndex);
-    applyFiltersToSlot(frameId, slotIndex);
-    scheduleAutosave();
+    commitFilterChange(frameId, slotIndex);
   });
 }
 
 function bindBlendControls() {
-  document.getElementById("fOpacity")?.addEventListener("input", () => {
+  const commitBlendChange = (frameId, slotIndex) => {
+    flushSlotFilterPreview(frameId, slotIndex);
+    pushUndo();
+    scheduleAutosave();
+  };
+  const opacityEl = document.getElementById("fOpacity");
+  const onOpacity = commit => {
     const obj = canvas.getActiveObject();
     if (!obj?.data) return;
     const { frameId, slotIndex } = obj.data;
     const f = ArtboardMap[frameId]?.slotFilters[slotIndex]; if (!f) return;
-    f.opacity = parseFloat(document.getElementById("fOpacity").value) / 100;
+    f.opacity = parseFloat(opacityEl.value) / 100;
     document.getElementById("fOpacity_val").textContent = Math.round(f.opacity * 100) + "%";
-    applyFiltersToSlot(frameId, slotIndex); scheduleAutosave();
-  });
+    if (commit) commitBlendChange(frameId, slotIndex);
+    else queueSlotFilterPreview(frameId, slotIndex);
+  };
+  opacityEl?.addEventListener("input", () => onOpacity(false));
+  opacityEl?.addEventListener("change", () => onOpacity(true));
   document.getElementById("fBlendMode")?.addEventListener("change", () => {
     const obj = canvas.getActiveObject();
     if (!obj?.data) return;
     const { frameId, slotIndex } = obj.data;
     const f = ArtboardMap[frameId]?.slotFilters[slotIndex]; if (!f) return;
     f.blendMode = document.getElementById("fBlendMode").value;
-    applyFiltersToSlot(frameId, slotIndex); scheduleAutosave();
+    commitBlendChange(frameId, slotIndex);
   });
 }
 
