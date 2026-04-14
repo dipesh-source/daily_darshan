@@ -24,6 +24,14 @@ const SLOT_IMAGE_BLEED_RATIO = 0.025;
 const SLOT_IMAGE_BLEED_MIN   = 10;
 const SLOT_IMAGE_BLEED_MAX   = 20;
 
+function configureStableFilterBackend() {
+  if (typeof fabric === "undefined") return;
+  fabric.enableGLFiltering = false;
+  if (fabric.Canvas2dFilterBackend) {
+    fabric.filterBackend = new fabric.Canvas2dFilterBackend();
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // AUTO-TEXT SYSTEM
 // Three text fields are auto-placed on every artboard:
@@ -181,6 +189,7 @@ function makeArtboardState(ab, ox, oy, dispW, dispH) {
 // INIT
 // ─────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  configureStableFilterBackend();
   computeLayout();
   initCanvas();
   initArtboards();
@@ -447,8 +456,7 @@ function loadArtboardFromJSON(state, savedJSON) {
       if (d.type === "slot-image"  && d.frameId === state.frameId) {
         state.slotImages[d.slotIndex] = obj;
         const slot = state.config.slots.find(s => s.index === d.slotIndex);
-        obj.clipPath = makeSlotClip(state, slot);
-        ensureSlotImageCoverage(state, slot, obj);
+        normalizeSlotImageObject(state, slot, obj);
       }
       if (d.type === "frame-overlay" && d.frameId === state.frameId) {
         state.overlayObj = obj;
@@ -598,12 +606,11 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
       hasControls:   true,
       hasBorders:    true,
       lockUniScaling: false,
+      objectCaching: false,
       data: { type: "slot-image", frameId, slotIndex, photoId, fileName: fileName || "", manualCrop: false },
     });
 
-    // Clip to the slot shape
-    img.clipPath = makeSlotClip(state, slot);
-    ensureSlotImageCoverage(state, slot, img);
+    normalizeSlotImageObject(state, slot, img);
 
     // Remove previous image for this slot
     if (state.slotImages[slotIndex]) canvas.remove(state.slotImages[slotIndex]);
@@ -673,6 +680,16 @@ function imgNaturalDims(fabricImg) {
   const w = (el && el.naturalWidth)  || fabricImg.width  || 1;
   const h = (el && el.naturalHeight) || fabricImg.height || 1;
   return { w, h };
+}
+
+function normalizeSlotImageObject(state, slot, img) {
+  if (!state || !slot || !img) return;
+  img.set({
+    clipPath: makeSlotClip(state, slot),
+    objectCaching: false,
+    dirty: true,
+  });
+  ensureSlotImageCoverage(state, slot, img);
 }
 
 function ensureSlotImageCoverage(state, slot, img) {
@@ -766,7 +783,24 @@ function applyFiltersToSlot(frameId, slotIndex) {
   const state = ArtboardMap[frameId];
   const img   = state?.slotImages[slotIndex];
   const f     = state?.slotFilters[slotIndex];
-  if (!img || !f) return;
+  const slot  = state?.config.slots.find(s => s.index === slotIndex);
+  if (!img || !f || !slot) return;
+
+  const snap = {
+    left: img.left,
+    top: img.top,
+    originX: img.originX,
+    originY: img.originY,
+    scaleX: img.scaleX,
+    scaleY: img.scaleY,
+    angle: img.angle,
+    flipX: img.flipX,
+    flipY: img.flipY,
+    skewX: img.skewX,
+    skewY: img.skewY,
+    cropX: img.cropX || 0,
+    cropY: img.cropY || 0,
+  };
 
   const filters = [];
   if (f.brightness !== 0) filters.push(new fabric.Image.filters.Brightness({ brightness: f.brightness }));
@@ -786,9 +820,14 @@ function applyFiltersToSlot(frameId, slotIndex) {
   if (f.sharpen)    filters.push(new fabric.Image.filters.Convolute({ matrix: [0,-1,0,-1,5,-1,0,-1,0] }));
 
   img.filters = filters;
-  img.set({ opacity: f.opacity, globalCompositeOperation: f.blendMode || "source-over" });
   img.applyFilters();
-  canvas.renderAll();
+  img.set({
+    ...snap,
+    opacity: f.opacity,
+    globalCompositeOperation: f.blendMode || "source-over",
+  });
+  normalizeSlotImageObject(state, slot, img);
+  canvas.requestRenderAll();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1276,7 +1315,7 @@ function bindColorControls() {
 
           const state = ArtboardMap[fid];
           const slot  = state?.config.slots.find(s => s.index === sid);
-          ensureSlotImageCoverage(state, slot, targetObj);
+          normalizeSlotImageObject(state, slot, targetObj);
           applyFiltersToSlot(fid, sid);
           targetObj.setCoords();
         });
@@ -2197,8 +2236,7 @@ function restoreAll(snapStr) {
         if (d.type === "slot-image") {
           const slot = state.config.slots.find(s => s.index === d.slotIndex);
           state.slotImages[d.slotIndex] = obj;
-          obj.clipPath = makeSlotClip(state, slot);
-          ensureSlotImageCoverage(state, slot, obj);
+          normalizeSlotImageObject(state, slot, obj);
         }
         if (d.type === "frame-overlay") { state.overlayObj = obj; obj.set({selectable:false,evented:false}); }
         if (d.type === "slot-placeholder") state.placeholders.push(obj);
@@ -2648,8 +2686,7 @@ async function importSettings(file) {
               const slot = state.config.slots.find(s => s.index === d.slotIndex);
               if (slot) {
                 state.slotImages[d.slotIndex] = obj;
-                obj.clipPath = makeSlotClip(state, slot);
-                ensureSlotImageCoverage(state, slot, obj);
+                normalizeSlotImageObject(state, slot, obj);
                 applyFiltersToSlot(fid, d.slotIndex);
                 // Update slot panel thumbnail
                 const up = uploadedSrcMap[d.slotIndex];
