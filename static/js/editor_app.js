@@ -605,7 +605,7 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
       selectable:    true,
       hasControls:   true,
       hasBorders:    true,
-      lockUniScaling: false,
+      lockUniScaling: true,
       data: { type: "slot-image", frameId, slotIndex, photoId, fileName: fileName || "", manualCrop: false },
     });
 
@@ -684,9 +684,14 @@ function imgNaturalDims(fabricImg) {
 function normalizeSlotImageObject(state, slot, img) {
   if (!state || !slot || !img) return;
   img.set({
-    clipPath: makeSlotClip(state, slot),
-    dirty: true,
+    clipPath:       makeSlotClip(state, slot),
+    dirty:          true,
+    lockUniScaling: true,   // proportional scaling only — no stretching
   });
+  // Hide the 4 middle edge handles (←→↑↓) — only corner handles are needed
+  // for proportional resize. Edge handles would stretch the image on Fabric's
+  // default behaviour before lockUniScaling kicks in visually.
+  img.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false });
   ensureSlotImageCoverage(state, slot, img);
 }
 
