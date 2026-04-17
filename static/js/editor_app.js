@@ -278,6 +278,20 @@ function initCanvas() {
   canvas.on("mouse:down",   onMouseDown);
   canvas.on("mouse:move",   onMouseMove);
   canvas.on("mouse:up",     onMouseUp);
+
+  // Slot placeholder click → open file picker (registered ONCE to avoid
+  // multiple inp.click() calls when createSlotPlaceholders fires per artboard).
+  canvas.on("mouse:down", e => {
+    if (!e.target) return;
+    const d = e.target.data;
+    if (d && d.type === "slot-placeholder") {
+      activateArtboard(d.frameId);
+      const st = ArtboardMap[d.frameId];
+      if (st) ensureFileInputs(d.frameId, st.config.slots);
+      const inp = document.getElementById(`fi-${d.frameId}-${d.slotIndex}`);
+      inp?.click();
+    }
+  });
   canvas.on("selection:created", onSelectionChange);
   canvas.on("selection:updated", onSelectionChange);
   canvas.on("selection:cleared", onSelectionCleared);
@@ -425,21 +439,6 @@ function createSlotPlaceholders(state) {
 
     canvas.add(bg, num, plus, hint);
     state.placeholders.push(bg, num, plus, hint);
-  });
-
-  // Click placeholder → trigger upload
-  canvas.on("mouse:down", e => {
-    if (!e.target) return;
-    const d = e.target.data;
-    if (d && d.type === "slot-placeholder") {
-      // Activate artboard first (synchronous DOM work), then open file picker
-      // immediately after so Chrome considers it a trusted event.
-      activateArtboard(d.frameId);
-      const st = ArtboardMap[d.frameId];
-      if (st) ensureFileInputs(d.frameId, st.config.slots);
-      const inp = document.getElementById(`fi-${d.frameId}-${d.slotIndex}`);
-      inp?.click();
-    }
   });
 }
 
