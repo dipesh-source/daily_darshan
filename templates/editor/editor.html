@@ -325,6 +325,13 @@
       <canvas id="mainCanvas"></canvas>
       <!-- Real-time adjustment HUD -->
       <div class="adjust-hud" id="adjustHud" style="display:none"></div>
+      <!-- Custom scrollbars -->
+      <div class="cvs-scrollbar cvs-scrollbar--h" id="scrollH">
+        <div class="cvs-scrollbar__thumb" id="scrollThumbH"></div>
+      </div>
+      <div class="cvs-scrollbar cvs-scrollbar--v" id="scrollV">
+        <div class="cvs-scrollbar__thumb" id="scrollThumbV"></div>
+      </div>
     </div>
 
     <!-- ── RIGHT PANEL ────────────────────────────────────────── -->
@@ -359,6 +366,25 @@
   <div id="hiddenFileInputs"></div>
 
   <div id="notifications" class="notifications"></div>
+
+  <!-- ══ EXPORT SELECTOR MODAL ═══════════════════════════════════ -->
+  <div class="export-sel-overlay" id="exportSelectorModal" style="display:none">
+    <div class="export-sel-card">
+      <div class="export-sel-header">
+        <span class="export-sel-title">Select Frames to Export</span>
+        <button class="sc-modal-close" id="exportSelClose">✕</button>
+      </div>
+      <div class="export-sel-actions">
+        <button class="export-sel-all-btn" id="exportSelAll">Select All</button>
+        <button class="export-sel-all-btn" id="exportSelNone">Deselect All</button>
+      </div>
+      <div class="export-sel-list" id="exportSelectorList"></div>
+      <div class="export-sel-footer">
+        <button class="sc-btn-reset" id="exportSelCancel">Cancel</button>
+        <button class="sc-btn-done"  id="exportSelConfirm">⬇ Export Selected</button>
+      </div>
+    </div>
+  </div>
 
   <div class="export-overlay" id="exportOverlay" style="display:none">
     <div class="export-card">

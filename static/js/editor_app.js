@@ -213,6 +213,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindGuidePanel();
   activateArtboard(window.ARTBOARDS[0].id);
   renderArtboardListPanel();
+  bindExportSelector();
   // Fit all artboards into view on startup
   requestAnimationFrame(fitAll);
 });
@@ -278,6 +279,8 @@ function initCanvas() {
   canvas.on("mouse:down",   onMouseDown);
   canvas.on("mouse:move",   onMouseMove);
   canvas.on("mouse:up",     onMouseUp);
+  canvas.on("after:render", updateScrollbars);
+  initScrollbars();
 
   // Slot placeholder click → open file picker (registered ONCE to avoid
   // multiple inp.click() calls when createSlotPlaceholders fires per artboard).
@@ -681,6 +684,40 @@ function imgNaturalDims(fabricImg) {
   return { w, h };
 }
 
+// Render callback for the custom rotation handle (blue circle with arrow).
+// Called by Fabric for each control render pass.
+function _drawRotateHandle(ctx, left, top) {
+  const r = 7;
+  ctx.save();
+  ctx.translate(left, top);
+  // Circle background
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = "#1976D2";
+  ctx.fill();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Rotation arc arrow
+  ctx.beginPath();
+  ctx.arc(0, 0, 3.8, -Math.PI * 0.75, Math.PI * 0.55);
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  // Arrowhead at arc end
+  const angle = Math.PI * 0.55;
+  const cx = Math.cos(angle) * 3.8, cy = Math.sin(angle) * 3.8;
+  const tx = -Math.sin(angle), ty = Math.cos(angle);  // tangent at arc end
+  ctx.beginPath();
+  ctx.moveTo(cx + tx * 2.2 - ty * 1.1, cy + ty * 2.2 + tx * 1.1);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(cx - tx * 2.2 - ty * 1.1, cy - ty * 2.2 + tx * 1.1);
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.restore();
+}
+
 function normalizeSlotImageObject(state, slot, img) {
   if (!state || !slot || !img) return;
   img.set({
@@ -688,10 +725,33 @@ function normalizeSlotImageObject(state, slot, img) {
     dirty:          true,
     lockUniScaling: true,   // proportional scaling only — no stretching
   });
-  // Hide the 4 middle edge handles (←→↑↓) — only corner handles are needed
-  // for proportional resize. Edge handles would stretch the image on Fabric's
-  // default behaviour before lockUniScaling kicks in visually.
+  // Hide the 4 middle edge handles (←→↑↓) — corners only for proportional resize.
   img.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false });
+
+  // Move the rotation handle to the top-right corner (just outside the bounding
+  // box) so it's easy to grab without obscuring the image center.
+  // Only do this once per img instance to avoid re-allocating on every filter call.
+  if (!img._cornerRotationSet) {
+    img._cornerRotationSet = true;
+    // Create a per-instance controls map so we only affect this image
+    img.controls = Object.assign({}, fabric.Object.prototype.controls);
+    const mtrBase = fabric.Object.prototype.controls.mtr;
+    if (mtrBase) {
+      img.controls.mtr = new fabric.Control({
+        x:              0.5,
+        y:             -0.5,
+        offsetX:        12,
+        offsetY:       -12,
+        cursorStyle:   "crosshair",
+        actionHandler:  mtrBase.actionHandler,
+        actionName:    "rotate",
+        render:         _drawRotateHandle,
+        cornerSize:     18,
+        withConnection: false,   // no line from top-center to handle
+      });
+    }
+  }
+
   ensureSlotImageCoverage(state, slot, img);
 }
 
@@ -1172,6 +1232,7 @@ function scrollToArtboard(frameId) {
   canvas.requestRenderAll();
   updateLabelPositions();
   updateZoomDisplay();
+  updateScrollbars();
 }
 
 function renderActiveFrameInfo(frameId) {
@@ -2191,11 +2252,29 @@ function bindTopBar() {
 // ZOOM / PAN
 // ─────────────────────────────────────────────────────────────────
 function onWheel(opt) {
-  const delta = opt.e.deltaY;
-  const zoom  = clamp(canvas.getZoom() * Math.pow(0.999, delta), 0.05, 10);
-  canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
-  opt.e.preventDefault(); opt.e.stopPropagation();
-  updateZoomDisplay(); updateLabelPositions();
+  const e = opt.e;
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (e.ctrlKey || e.metaKey) {
+    // Ctrl / Cmd + scroll  →  zoom toward cursor
+    const zoom = clamp(canvas.getZoom() * Math.pow(0.999, e.deltaY), 0.05, 10);
+    canvas.zoomToPoint({ x: e.offsetX, y: e.offsetY }, zoom);
+    updateZoomDisplay();
+  } else {
+    // Plain scroll  →  pan canvas
+    // Shift + scroll  →  horizontal pan
+    const vpt = canvas.viewportTransform;
+    if (e.shiftKey) {
+      vpt[4] -= e.deltaY;          // horizontal
+    } else {
+      vpt[4] -= e.deltaX || 0;     // trackpad h-scroll
+      vpt[5] -= e.deltaY;          // vertical
+    }
+    canvas.requestRenderAll();
+  }
+  updateLabelPositions();
+  updateScrollbars();
 }
 function onMouseDown(opt) {
   if (currentTool !== "hand") return;
@@ -2211,6 +2290,7 @@ function onMouseMove(opt) {
   canvas.requestRenderAll();
   lastPanPt = { x: opt.e.clientX, y: opt.e.clientY };
   updateLabelPositions();
+  updateScrollbars();
 }
 function onMouseUp() {
   isPanning = false;
@@ -2220,7 +2300,7 @@ function onMouseUp() {
 function adjustZoom(factor) {
   const zoom = clamp(canvas.getZoom() * factor, 0.05, 10);
   canvas.zoomToPoint({ x: canvas.width/2, y: canvas.height/2 }, zoom);
-  updateZoomDisplay(); updateLabelPositions();
+  updateZoomDisplay(); updateLabelPositions(); updateScrollbars();
 }
 function fitAll() {
   const area  = document.getElementById("canvasArea");
@@ -2240,7 +2320,7 @@ function fitAll() {
   canvas.viewportTransform[4] = viewW / 2 - cx * zoom;
   canvas.viewportTransform[5] = viewH / 2 - cy * zoom;
   canvas.requestRenderAll();
-  updateZoomDisplay(); updateLabelPositions();
+  updateZoomDisplay(); updateLabelPositions(); updateScrollbars();
 }
 // Jump to and fit the currently active frame (Ctrl/Cmd+0)
 function focusActiveFrame() {
@@ -2250,6 +2330,102 @@ function focusActiveFrame() {
 function updateZoomDisplay() {
   const el = document.getElementById("zoomDisplay");
   if (el) el.textContent = Math.round(canvas.getZoom() * 100) + "%";
+}
+
+// ─────────────────────────────────────────────────────────────────
+// SCROLLBARS
+// ─────────────────────────────────────────────────────────────────
+function updateScrollbars() {
+  const hBar   = document.getElementById("scrollH");
+  const vBar   = document.getElementById("scrollV");
+  const hThumb = document.getElementById("scrollThumbH");
+  const vThumb = document.getElementById("scrollThumbV");
+  if (!hBar || !vBar || !canvas) return;
+
+  const viewW    = canvas.width;
+  const viewH    = canvas.height;
+  const zoom     = canvas.getZoom();
+  const vpt      = canvas.viewportTransform;
+  const contentW = canvasTotalW * zoom;
+  const contentH = canvasH * zoom;
+  const panX     = -vpt[4];
+  const panY     = -vpt[5];
+
+  const hRatio   = Math.min(viewW / Math.max(contentW, 1), 1);
+  const vRatio   = Math.min(viewH / Math.max(contentH, 1), 1);
+  const hBarW    = hBar.clientWidth;
+  const vBarH    = vBar.clientHeight;
+  const hThumbW  = Math.max(hRatio * hBarW, 32);
+  const vThumbH  = Math.max(vRatio * vBarH, 32);
+  const maxPanX  = Math.max(contentW - viewW, 0);
+  const maxPanY  = Math.max(contentH - viewH, 0);
+  const hPos     = maxPanX ? (clamp(panX, 0, maxPanX) / maxPanX) * (hBarW - hThumbW) : 0;
+  const vPos     = maxPanY ? (clamp(panY, 0, maxPanY) / maxPanY) * (vBarH - vThumbH) : 0;
+
+  hThumb.style.width  = hThumbW + "px";
+  hThumb.style.left   = hPos    + "px";
+  vThumb.style.height = vThumbH + "px";
+  vThumb.style.top    = vPos    + "px";
+
+  hBar.style.display = hRatio >= 0.999 ? "none" : "block";
+  vBar.style.display = vRatio >= 0.999 ? "none" : "block";
+}
+
+function initScrollbars() {
+  const hBar   = document.getElementById("scrollH");
+  const vBar   = document.getElementById("scrollV");
+  const hThumb = document.getElementById("scrollThumbH");
+  const vThumb = document.getElementById("scrollThumbV");
+  if (!hThumb || !vThumb) return;
+
+  let dragging  = null;   // 'h' | 'v'
+  let dragStart = 0;
+  let panStart  = 0;
+
+  function startDrag(axis, clientPos, currentPan) {
+    dragging  = axis;
+    dragStart = clientPos;
+    panStart  = currentPan;
+    document.body.style.userSelect = "none";
+  }
+  function stopDrag() {
+    dragging = null;
+    document.body.style.userSelect = "";
+  }
+
+  hThumb.addEventListener("mousedown", e => {
+    startDrag("h", e.clientX, -canvas.viewportTransform[4]);
+    e.stopPropagation(); e.preventDefault();
+  });
+  vThumb.addEventListener("mousedown", e => {
+    startDrag("v", e.clientY, -canvas.viewportTransform[5]);
+    e.stopPropagation(); e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    const zoom  = canvas.getZoom();
+    const vpt   = canvas.viewportTransform;
+    if (dragging === "h") {
+      const barW    = hBar.clientWidth;
+      const thumbW  = hThumb.offsetWidth;
+      const maxPan  = Math.max(canvasTotalW * zoom - canvas.width, 0);
+      const delta   = e.clientX - dragStart;
+      const ratio   = delta / Math.max(barW - thumbW, 1);
+      vpt[4] = -clamp(panStart + ratio * maxPan, 0, maxPan);
+    } else {
+      const barH    = vBar.clientHeight;
+      const thumbH  = vThumb.offsetHeight;
+      const maxPan  = Math.max(canvasH * zoom - canvas.height, 0);
+      const delta   = e.clientY - dragStart;
+      const ratio   = delta / Math.max(barH - thumbH, 1);
+      vpt[5] = -clamp(panStart + ratio * maxPan, 0, maxPan);
+    }
+    canvas.requestRenderAll();
+    updateLabelPositions();
+    updateScrollbars();
+  });
+  document.addEventListener("mouseup", stopDrag);
+  document.addEventListener("mouseleave", stopDrag);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2448,11 +2624,65 @@ async function exportFrame(frameId) {
   }
 }
 
+function showExportSelector() {
+  const modal = document.getElementById("exportSelectorModal");
+  const list  = document.getElementById("exportSelectorList");
+  if (!modal || !list) return;
+  list.innerHTML = "";
+
+  Object.values(ArtboardMap).forEach(state => {
+    const photoCount = canvas.getObjects().filter(o =>
+      o.data?.frameId === state.frameId && o.data?.type === "slot-image"
+    ).length;
+    const totalSlots = state.config.slots.length;
+    const ready = photoCount > 0;
+
+    const row = document.createElement("label");
+    row.className = "export-sel-row" + (ready ? " ready" : "");
+    row.innerHTML = `
+      <input type="checkbox" value="${state.frameId}" ${ready ? "checked" : "disabled"}>
+      <span class="export-sel-name">${state.config.display_name}</span>
+      <span class="export-sel-dim">${state.config.canvas_width}×${state.config.canvas_height}</span>
+      <span class="export-sel-status ${ready ? "ready" : "empty"}">
+        ${ready ? `${photoCount} / ${totalSlots} photo${photoCount !== 1 ? "s" : ""}` : "No photos"}
+      </span>`;
+    list.appendChild(row);
+  });
+
+  modal.style.display = "flex";
+}
+
+function bindExportSelector() {
+  const closeModal = () => {
+    document.getElementById("exportSelectorModal").style.display = "none";
+  };
+  document.getElementById("exportSelClose")?.addEventListener("click",  closeModal);
+  document.getElementById("exportSelCancel")?.addEventListener("click", closeModal);
+  document.getElementById("exportSelAll")?.addEventListener("click", () => {
+    document.querySelectorAll("#exportSelectorList input[type=checkbox]:not(:disabled)")
+      .forEach(cb => { cb.checked = true; });
+  });
+  document.getElementById("exportSelNone")?.addEventListener("click", () => {
+    document.querySelectorAll("#exportSelectorList input[type=checkbox]:not(:disabled)")
+      .forEach(cb => { cb.checked = false; });
+  });
+  document.getElementById("exportSelConfirm")?.addEventListener("click", async () => {
+    closeModal();
+    const checked  = document.querySelectorAll("#exportSelectorList input[type=checkbox]:checked");
+    const frameIds = [...checked].map(cb => parseInt(cb.value));
+    if (!frameIds.length) { notify("No frames selected for export", "info"); return; }
+    await exportSelected(frameIds);
+  });
+}
+
 async function exportAll() {
-  const toExport = Object.values(ArtboardMap).filter(s =>
-    canvas.getObjects().some(o => o.data?.frameId === s.frameId && o.data?.type === "slot-image")
-  );
-  if (!toExport.length) { notify("Upload photos first before bulk export", "info"); return; }
+  // "Export All" opens the selector so the user can choose which frames to include
+  showExportSelector();
+}
+
+async function exportSelected(frameIds) {
+  const toExport = frameIds.map(id => ArtboardMap[id]).filter(Boolean);
+  if (!toExport.length) { notify("No frames to export", "info"); return; }
 
   const overlay = document.getElementById("exportOverlay");
   const msg     = document.getElementById("exportMsg");
@@ -2869,6 +3099,8 @@ const SHORTCUT_DEFS = [
   { id:"undo",            cat:"Edit",   label:"Undo",                    def:"ctrl+z"            },
   { id:"redo",            cat:"Edit",   label:"Redo",                    def:"ctrl+y"            },
   { id:"deleteSelected",  cat:"Edit",   label:"Delete Selected",         def:"delete"            },
+  { id:"rotateCCW",       cat:"Edit",   label:"Rotate Left 15°",         def:"["                 },
+  { id:"rotateCW",        cat:"Edit",   label:"Rotate Right 15°",        def:"]"                 },
   { id:"nudgeLeft",       cat:"Edit",   label:"Nudge Left 1px",          def:"arrowleft"         },
   { id:"nudgeRight",      cat:"Edit",   label:"Nudge Right 1px",         def:"arrowright"        },
   { id:"nudgeUp",         cat:"Edit",   label:"Nudge Up 1px",            def:"arrowup"           },
@@ -2880,7 +3112,7 @@ const SHORTCUT_DEFS = [
   { id:"escape",          cat:"Edit",   label:"Deselect / Close",        def:"escape"            },
   { id:"save",            cat:"File",   label:"Save",                    def:"ctrl+s"            },
   { id:"exportFrame",     cat:"File",   label:"Export Active Frame",     def:"ctrl+e"            },
-  { id:"exportAll",       cat:"File",   label:"Export All Frames",       def:"ctrl+shift+e"      },
+  { id:"exportAll",       cat:"File",   label:"Export All (select frames)", def:"ctrl+shift+e"   },
   { id:"exportSettings",  cat:"File",   label:"Export Settings JSON",    def:"ctrl+shift+s"      },
   { id:"toolSelect",      cat:"Tools",  label:"Select Tool",             def:"v"                 },
   { id:"toolHand",        cat:"Tools",  label:"Hand (Pan) Tool",         def:"h"                 },
@@ -2889,6 +3121,12 @@ const SHORTCUT_DEFS = [
   { id:"focusFrame",      cat:"View",   label:"Focus Active Frame",      def:"ctrl+0"            },
   { id:"zoomIn",          cat:"View",   label:"Zoom In",                 def:"="                 },
   { id:"zoomOut",         cat:"View",   label:"Zoom Out",                def:"-"                 },
+  // Canvas interactions — non-remappable, documented for reference
+  { id:"zoomScroll",      cat:"Canvas", label:"Zoom to cursor",          def:"Ctrl + Scroll",    noRemap: true },
+  { id:"panVScroll",      cat:"Canvas", label:"Pan vertically",          def:"Scroll",           noRemap: true },
+  { id:"panHScroll",      cat:"Canvas", label:"Pan horizontally",        def:"Shift + Scroll",   noRemap: true },
+  { id:"rotateHandle",    cat:"Canvas", label:"Rotate photo",            def:"Drag ↻ corner",    noRemap: true },
+  { id:"scrollbars",      cat:"Canvas", label:"Scroll via scrollbars",   def:"Drag H / V bar",   noRemap: true },
   { id:"showShortcuts",   cat:"Help",   label:"Keyboard Shortcuts",      def:"ctrl+/"            },
   { id:"startTour",       cat:"Help",   label:"Start Guided Tour",       def:"ctrl+shift+h"      },
 ];
@@ -2898,9 +3136,9 @@ let _shortcuts = {}; // id → active key string
 function _loadShortcuts() {
   try {
     const saved = JSON.parse(localStorage.getItem("dd_shortcuts") || "{}");
-    SHORTCUT_DEFS.forEach(d => { _shortcuts[d.id] = saved[d.id] || d.def; });
+    SHORTCUT_DEFS.filter(d => !d.noRemap).forEach(d => { _shortcuts[d.id] = saved[d.id] || d.def; });
   } catch {
-    SHORTCUT_DEFS.forEach(d => { _shortcuts[d.id] = d.def; });
+    SHORTCUT_DEFS.filter(d => !d.noRemap).forEach(d => { _shortcuts[d.id] = d.def; });
   }
 }
 function _saveShortcuts() {
@@ -2938,6 +3176,22 @@ function bindKeyboard() {
     if (_normalizeKey(e) === "shift+s") { e.preventDefault(); _snapEnabled = !_snapEnabled; document.getElementById("btnToggleSnap")?.classList.toggle("active", _snapEnabled); notify(_snapEnabled ? "Snap ON" : "Snap OFF", "info"); return; }
     if (_is(e,"undo"))           { e.preventDefault(); undo(); return; }
     if (_is(e,"redo"))           { e.preventDefault(); redo(); return; }
+    // Rotate selected object 15° CCW / CW  ([ and ])
+    if (_is(e,"rotateCCW") || _is(e,"rotateCW")) {
+      e.preventDefault();
+      const obj = canvas.getActiveObject();
+      if (obj) {
+        const d = obj.data || {};
+        if (!["frame-overlay","slot-placeholder","slot-label","artboard-bg"].includes(d.type)) {
+          const delta = _is(e,"rotateCCW") ? -15 : 15;
+          obj.rotate(((obj.angle || 0) + delta + 360) % 360);
+          obj.setCoords();
+          canvas.renderAll();
+          pushUndo(); scheduleAutosave();
+        }
+      }
+      return;
+    }
     if (_is(e,"save"))           { e.preventDefault(); saveSession(); return; }
     if (_is(e,"focusFrame"))     { e.preventDefault(); focusActiveFrame(); return; }
     if (_is(e,"exportFrame"))    { e.preventDefault(); exportFrame(activeFrameId); return; }
@@ -3000,11 +3254,12 @@ function showShortcutsModal() {
   // Group by category
   const cats = [...new Set(SHORTCUT_DEFS.map(d => d.cat))];
   body.innerHTML = cats.map(cat => {
-    const rows = SHORTCUT_DEFS.filter(d => d.cat === cat).map(d => `
-      <div class="sc-row">
-        <span class="sc-label">${d.label}</span>
-        <span class="sc-key" data-sc-id="${d.id}" title="Click to change">${_fmtKey(_shortcuts[d.id] || d.def)}</span>
-      </div>`).join("");
+    const rows = SHORTCUT_DEFS.filter(d => d.cat === cat).map(d => {
+      const keyEl = d.noRemap
+        ? `<span class="sc-key sc-key-fixed" title="Fixed interaction">${d.def}</span>`
+        : `<span class="sc-key" data-sc-id="${d.id}" title="Click to change">${_fmtKey(_shortcuts[d.id] || d.def)}</span>`;
+      return `<div class="sc-row"><span class="sc-label">${d.label}</span>${keyEl}</div>`;
+    }).join("");
     return `<div class="sc-category">${cat}</div>${rows}`;
   }).join("");
 
@@ -3055,7 +3310,7 @@ function bindShortcutsModal() {
     document.getElementById("scModal").style.display = "none";
   });
   document.getElementById("scResetAll")?.addEventListener("click", () => {
-    SHORTCUT_DEFS.forEach(d => { _shortcuts[d.id] = d.def; });
+    SHORTCUT_DEFS.filter(d => !d.noRemap).forEach(d => { _shortcuts[d.id] = d.def; });
     _saveShortcuts();
     showShortcutsModal(); // re-render
     notify("All shortcuts reset to defaults", "info");

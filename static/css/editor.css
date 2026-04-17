@@ -419,6 +419,35 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 }
 .canvas-area canvas { display: block; }
 
+/* ── Custom scrollbars ───────────────────────────────────── */
+.cvs-scrollbar {
+  position: absolute;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  z-index: 20;
+  transition: opacity .2s;
+}
+.cvs-scrollbar--h {
+  bottom: 3px; left: 3px;
+  right: 12px; height: 8px;
+}
+.cvs-scrollbar--v {
+  right: 3px; top: 3px;
+  bottom: 12px; width: 8px;
+}
+.cvs-scrollbar__thumb {
+  position: absolute;
+  background: rgba(255,255,255,0.22);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .15s;
+  min-width: 32px; min-height: 32px;
+}
+.cvs-scrollbar--h .cvs-scrollbar__thumb { height: 100%; top: 0; }
+.cvs-scrollbar--v .cvs-scrollbar__thumb { width: 100%; left: 0; }
+.cvs-scrollbar__thumb:hover,
+.cvs-scrollbar__thumb:active { background: rgba(255,255,255,0.44); }
+
 /* ── Adjustment HUD ─────────────────────────────────────── */
 .adjust-hud {
   position: absolute;
@@ -535,6 +564,54 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .notification-info    { background: #1A2A4A; color: #90B8FF; border: 1px solid #2A3A6A; }
 @keyframes slideIn { from { opacity:0; transform: translateX(12px); } to { opacity:1; transform: translateX(0); } }
 
+/* ── Export selector modal ─────────────────────────────────── */
+.export-sel-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.72);
+  display: flex; align-items: center; justify-content: center; z-index: 9000;
+}
+.export-sel-card {
+  background: var(--editor-panel); border: 1px solid var(--editor-border);
+  border-radius: var(--radius-lg); width: 480px; max-width: 96vw;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0,0,0,.6);
+}
+.export-sel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--editor-border);
+}
+.export-sel-title { font-size: 14px; font-weight: 700; color: var(--editor-text); }
+.export-sel-actions {
+  display: flex; gap: 8px; padding: 10px 18px;
+  border-bottom: 1px solid var(--editor-border);
+}
+.export-sel-all-btn {
+  font-size: 11px; padding: 3px 10px; border-radius: 4px;
+  background: var(--editor-hover); color: var(--editor-muted);
+  transition: background .12s;
+}
+.export-sel-all-btn:hover { background: var(--editor-border); color: var(--editor-text); }
+.export-sel-list {
+  overflow-y: auto; max-height: 340px; padding: 10px 18px; display: flex; flex-direction: column; gap: 6px;
+}
+.export-sel-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border-radius: 6px; background: var(--editor-hover); cursor: pointer;
+  border: 1px solid transparent; transition: border-color .12s;
+}
+.export-sel-row:hover           { border-color: var(--editor-border); }
+.export-sel-row.ready           { border-color: rgba(127,216,154,.18); }
+.export-sel-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--editor-accent); cursor: pointer; flex-shrink: 0; }
+.export-sel-row input:disabled  { opacity: 0.35; cursor: not-allowed; }
+.export-sel-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--editor-text); }
+.export-sel-dim  { font-size: 10px; color: var(--editor-muted); white-space: nowrap; }
+.export-sel-status        { font-size: 10px; white-space: nowrap; font-weight: 600; }
+.export-sel-status.ready  { color: #7FD89A; }
+.export-sel-status.empty  { color: var(--editor-muted); }
+.export-sel-footer {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 12px 18px; border-top: 1px solid var(--editor-border);
+}
+
 /* ── Export overlay ────────────────────────────────────────── */
 .export-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.75);
@@ -632,6 +709,13 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
   min-width: 80px; text-align: center;
 }
 .sc-key:hover  { border-color: var(--editor-accent); }
+.sc-key-fixed  {
+  background: #1e2a1e; border: 1px solid #2a4a2a;
+  border-radius: 5px; padding: 3px 10px;
+  font-size: 11px; color: #7FD89A; cursor: default;
+  white-space: nowrap; min-width: 80px; text-align: center;
+  opacity: 0.85;
+}
 .sc-key.recording {
   border-color: #ff6b35; color: #ff6b35;
   animation: sc-pulse 0.8s ease-in-out infinite;
