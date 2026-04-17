@@ -110,31 +110,38 @@ function addAutoTextToArtboard(state) {
   const layout = AUTO_TEXT_LAYOUT[state.config.frame_type];
   if (!layout) return;
 
-  // Collect textKeys already present for this artboard (from restored JSON)
-  const existingKeys = new Set(
-    canvas.getObjects()
-      .filter(o => o.data?.frameId === state.frameId && o.data?.textKey)
-      .map(o => o.data.textKey)
-  );
+  // Build a map of already-present auto-text objects for this artboard
+  const existingByKey = {};
+  canvas.getObjects()
+    .filter(o => o.data?.frameId === state.frameId && o.data?.textKey)
+    .forEach(o => { existingByKey[o.data.textKey] = o; });
 
   const s = state.scale;
   layout.forEach(def => {
-    if (existingKeys.has(def.key)) return;  // already present from saved session
+    if (existingByKey[def.key]) {
+      // Ensure existing auto-text objects are locked (covers sessions saved before locking)
+      const existing = existingByKey[def.key];
+      if (!existing.data) existing.data = {};
+      existing.data.locked = true;
+      existing.set({ selectable: false, evented: false, hoverCursor: "not-allowed" });
+      if (canvas.getActiveObject() === existing) canvas.discardActiveObject();
+      return;
+    }
 
     const txt = new fabric.IText(autoTextValue(def.key), {
-      left:       state.ox + def.x * s,
-      top:        state.oy + def.y * s,
-      originX:    def.originX,
-      originY:    "center",
-      fontSize:   Math.round(def.fontSize * s),
-      fontFamily: "Arial",
-      fontWeight: def.bold ? "bold" : "normal",
-      fill:       def.color,
-      shadow:     new fabric.Shadow({ color:"rgba(0,0,0,0.75)", blur:6, offsetX:1, offsetY:2 }),
-      selectable: true,
-      hasControls: true,
-      lockScalingX: false, lockScalingY: false,
-      data: { type:"text-overlay", frameId: state.frameId, textKey: def.key },
+      left:        state.ox + def.x * s,
+      top:         state.oy + def.y * s,
+      originX:     def.originX,
+      originY:     "center",
+      fontSize:    Math.round(def.fontSize * s),
+      fontFamily:  "Arial",
+      fontWeight:  def.bold ? "bold" : "normal",
+      fill:        def.color,
+      shadow:      new fabric.Shadow({ color:"rgba(0,0,0,0.75)", blur:6, offsetX:1, offsetY:2 }),
+      selectable:  false,
+      evented:     false,
+      hoverCursor: "not-allowed",
+      data: { type:"text-overlay", frameId: state.frameId, textKey: def.key, locked: true },
     });
     canvas.add(txt);
     state.textObjs.push(txt);
@@ -454,22 +461,26 @@ function loadArtboardFromJSON(state, savedJSON) {
   const objs = savedJSON.objects || [];
   fabric.util.enlivenObjects(objs, loaded => {
     loaded.forEach(obj => {
-      canvas.add(obj);
       const d = obj.data || {};
-      if (d.type === "slot-image"  && d.frameId === state.frameId) {
+      // Frame overlays are NEVER restored from saved JSON — always reload fresh from server
+      if (d.type === "frame-overlay") return;
+      canvas.add(obj);
+      if (d.type === "slot-image" && d.frameId === state.frameId) {
         state.slotImages[d.slotIndex] = obj;
         const slot = state.config.slots.find(s => s.index === d.slotIndex);
         normalizeSlotImageObject(state, slot, obj);
       }
-      if (d.type === "frame-overlay" && d.frameId === state.frameId) {
-        state.overlayObj = obj;
-        obj.set({ selectable: false, evented: false });
-      }
+      // Re-apply lock state for any object that carries a locked flag
+      if (typeof d.locked === "boolean") applyLayerLock(obj);
     });
-    addAutoTextToArtboard(state);  // add any missing auto-text fields
-    bringOverlayToFront(state);
+    addAutoTextToArtboard(state);  // add any missing auto-text fields (also locks them)
     canvas.renderAll();
   });
+
+  // Always reload frame overlay fresh from the server URL (never from DB)
+  if (state.config.overlay_url) {
+    loadFrameOverlay(state, state.config.overlay_url);
+  }
 
   // Re-create placeholders for any slot that has no image
   state.config.slots.forEach(slot => {
@@ -1251,6 +1262,29 @@ function renderActiveFrameInfo(frameId) {
 // ─────────────────────────────────────────────────────────────────
 // LAYERS PANEL
 // ─────────────────────────────────────────────────────────────────
+// Apply or remove interactive lock on a Fabric object based on data.locked.
+// Only acts on objects that explicitly carry a boolean locked flag.
+function applyLayerLock(obj) {
+  if (!obj || obj.data?.locked === undefined) return;
+  const locked = !!obj.data.locked;
+  obj.set({
+    selectable:  !locked,
+    evented:     !locked,
+    hoverCursor: locked ? "not-allowed" : null,
+  });
+  if (locked && canvas.getActiveObject() === obj) canvas.discardActiveObject();
+}
+
+function toggleLayerLock(obj) {
+  if (!obj || !obj.data) return;
+  obj.data.locked = !obj.data.locked;
+  applyLayerLock(obj);
+  canvas.renderAll();
+  refreshLayersPanel();
+  pushUndo();
+  scheduleAutosave();
+}
+
 function bindLayersPanel() {
   document.getElementById("btnRefreshLayers")?.addEventListener("click", refreshLayersPanel);
 }
@@ -1269,28 +1303,54 @@ function refreshLayersPanel() {
 
   const activeObj = canvas.getActiveObject();
   [...objs].reverse().forEach(obj => {
-    const d    = obj.data || {};
+    const d         = obj.data || {};
+    const isSystem  = d.type === "frame-overlay" || d.type === "slot-placeholder";
+    const isLocked  = !!d.locked;
+    const canSelect = !isLocked && !isSystem;
+    const canLock   = !isSystem; // frame-overlay and placeholders are always non-interactive
+
     const item = document.createElement("div");
-    item._fabricObj = obj;  // store ref for _syncLayerHighlight
-    const selectable = d.type !== "frame-overlay" && d.type !== "slot-placeholder";
-    item.className = "layer-item" + (obj === activeObj && selectable ? " layer-item--active" : "");
-    const icon = d.type === "slot-image"    ? "📷"
-               : d.type === "text-overlay"  ? "T"
-               : d.type === "frame-overlay" ? "🖼"
+    item._fabricObj = obj;
+    item.className = "layer-item"
+      + (obj === activeObj && canSelect ? " layer-item--active" : "")
+      + (isLocked ? " layer-item--locked" : "");
+
+    const icon = d.type === "slot-image"       ? "📷"
+               : d.type === "text-overlay"     ? "T"
+               : d.type === "frame-overlay"    ? "🖼"
                : d.type === "slot-placeholder" ? "⬜"
                : "◻";
-    const name = d.type === "slot-image"   ? `Photo – Slot ${(d.slotIndex ?? 0) + 1}`
-               : d.type === "text-overlay" ? (obj.text || "Text").slice(0, 22)
-               : d.type === "frame-overlay"? "Frame Overlay"
+    const name = d.type === "slot-image"    ? `Photo – Slot ${(d.slotIndex ?? 0) + 1}`
+               : d.type === "text-overlay"  ? (obj.text || "Text").slice(0, 22)
+               : d.type === "frame-overlay" ? "Frame Overlay"
                : "Object";
-    item.innerHTML = `<span class="layer-icon">${icon}</span><span class="layer-name">${name}</span>`;
-    if (selectable) {
-      item.addEventListener("click", () => {
+
+    const lockBtn = canLock
+      ? `<button class="layer-lock-btn${isLocked ? " locked" : ""}" title="${isLocked ? "Unlock layer" : "Lock layer"}">${isLocked ? "🔒" : "🔓"}</button>`
+      : "";
+    item.innerHTML = `<span class="layer-icon">${icon}</span><span class="layer-name">${name}</span>${lockBtn}`;
+
+    if (canSelect) {
+      item.addEventListener("click", e => {
+        if (e.target.closest(".layer-lock-btn")) return; // handled below
         canvas.setActiveObject(obj);
         canvas.renderAll();
         _syncLayerHighlight(obj);
       });
+    } else if (isLocked) {
+      item.addEventListener("click", e => {
+        if (e.target.closest(".layer-lock-btn")) return;
+        notify("Layer is locked — click 🔒 to unlock", "info");
+      });
     }
+
+    if (canLock) {
+      item.querySelector(".layer-lock-btn").addEventListener("click", e => {
+        e.stopPropagation();
+        toggleLayerLock(obj);
+      });
+    }
+
     list.appendChild(item);
   });
 }
@@ -2454,7 +2514,7 @@ function serializeAll() {
   Object.values(ArtboardMap).forEach(ab => {
     const objs = canvas.getObjects().filter(o => {
       const d = o.data || {};
-      return d.frameId === ab.frameId && d.type !== "artboard-bg";
+      return d.frameId === ab.frameId && d.type !== "artboard-bg" && d.type !== "frame-overlay";
     });
     snap[ab.frameId] = objs.map(o => o.toObject(["data", "clipPath"]));
   });
@@ -2462,10 +2522,10 @@ function serializeAll() {
 }
 function restoreAll(snapStr) {
   const snap = JSON.parse(snapStr);
-  // Remove all non-bg objects first
+  // Remove all non-bg, non-overlay objects first (overlays are always reloaded from server)
   canvas.getObjects().filter(o => {
     const d = o.data || {};
-    return d.type !== "artboard-bg";
+    return d.type !== "artboard-bg" && d.type !== "frame-overlay";
   }).forEach(o => canvas.remove(o));
 
   // Restore per-artboard
@@ -2478,16 +2538,19 @@ function restoreAll(snapStr) {
 
     fabric.util.enlivenObjects(objs, loaded => {
       loaded.forEach(obj => {
-        canvas.add(obj);
         const d = obj.data || {};
+        // Frame overlays are never in undo snapshots — skip just in case
+        if (d.type === "frame-overlay") return;
+        canvas.add(obj);
         if (d.type === "slot-image") {
           const slot = state.config.slots.find(s => s.index === d.slotIndex);
           state.slotImages[d.slotIndex] = obj;
           normalizeSlotImageObject(state, slot, obj);
         }
-        if (d.type === "frame-overlay") { state.overlayObj = obj; obj.set({selectable:false,evented:false}); }
         if (d.type === "slot-placeholder") state.placeholders.push(obj);
+        if (typeof d.locked === "boolean") applyLayerLock(obj);
       });
+      addAutoTextToArtboard(state);
       canvas.renderAll();
     });
   });
@@ -2505,7 +2568,7 @@ async function saveSession() {
   Object.values(ArtboardMap).forEach(ab => {
     const objs = canvas.getObjects().filter(o => {
       const d = o.data || {};
-      return d.frameId === ab.frameId && d.type !== "artboard-bg" && d.type !== "slot-placeholder" && d.type !== "slot-label";
+      return d.frameId === ab.frameId && d.type !== "artboard-bg" && d.type !== "slot-placeholder" && d.type !== "slot-label" && d.type !== "frame-overlay";
     });
     artboards[ab.frameId] = {
       objects: objs.map(o => o.toObject(["data", "clipPath"])),
@@ -2944,9 +3007,9 @@ async function importSettings(file) {
       msg.textContent = `Restoring ${i + 1}/${frameEntries.length}: ${frameData.display_name}…`;
       await new Promise(r => setTimeout(r, 30));
 
-      // Clear existing non-bg objects for this frame
+      // Clear existing non-bg, non-overlay objects for this frame
       canvas.getObjects()
-        .filter(o => o.data?.frameId === fid && o.data?.type !== "artboard-bg")
+        .filter(o => o.data?.frameId === fid && o.data?.type !== "artboard-bg" && o.data?.type !== "frame-overlay")
         .forEach(o => canvas.remove(o));
       state.slotImages   = {};
       state.placeholders = [];
@@ -2981,8 +3044,10 @@ async function importSettings(file) {
       await new Promise(resolve => {
         fabric.util.enlivenObjects(frameData.objects || [], loaded => {
           loaded.forEach(obj => {
-            canvas.add(obj);
             const d = obj.data || {};
+            // Frame overlays are never restored from saved data — always reload fresh
+            if (d.type === "frame-overlay") return;
+            canvas.add(obj);
             if (d.type === "slot-image") {
               const slot = state.config.slots.find(s => s.index === d.slotIndex);
               if (slot) {
@@ -2994,14 +3059,13 @@ async function importSettings(file) {
                 if (up) updateSlotPanelThumb(fid, d.slotIndex, up.url);
               }
             }
-            if (d.type === "frame-overlay") {
-              state.overlayObj = obj;
-              obj.set({ selectable: false, evented: false });
-            }
             if (d.type === "slot-placeholder") state.placeholders.push(obj);
             if (d.type === "text-overlay")     state.textObjs.push(obj);
+            if (typeof d.locked === "boolean") applyLayerLock(obj);
           });
-          bringOverlayToFront(state);
+          addAutoTextToArtboard(state);
+          // Always reload frame overlay fresh from server
+          if (state.config.overlay_url) loadFrameOverlay(state, state.config.overlay_url);
           resolve();
         });
       });

@@ -533,6 +533,16 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .layer-item:hover         { background: var(--editor-hover); color: var(--editor-text); }
 .layer-item--active       { background: #2A3A28 !important; color: #7FD89A !important; }
 .layer-item--active:hover { background: #344530 !important; }
+.layer-item--locked       { opacity: .6; }
+.layer-item--locked:hover { background: var(--editor-hover) !important; }
+.layer-lock-btn {
+  flex-shrink: 0; margin-left: auto;
+  background: none; border: none; padding: 1px 3px;
+  font-size: 12px; line-height: 1; cursor: pointer;
+  opacity: .5; border-radius: 3px; transition: opacity .1s, background .1s;
+}
+.layer-lock-btn:hover     { opacity: 1; background: rgba(255,255,255,.08); }
+.layer-lock-btn.locked    { opacity: .85; }
 .layer-icon { font-size: 13px; flex-shrink: 0; }
 .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-layers-refresh {
