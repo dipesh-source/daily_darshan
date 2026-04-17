@@ -3362,12 +3362,31 @@ function notify(msg, type = "info") {
   document.getElementById("notifications").appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
-function setStatus(msg, state) {
+function setStatus(_msg, state) {
   // state: "pending" | "saving" | "saved" | "error" | ""
-  const el = document.getElementById("saveStatus");
-  if (!el) return;
-  el.textContent = msg;
-  el.className = "save-status" + (state ? ` save-status--${state}` : "");
+  const btn = document.getElementById("btnSave");
+  if (!btn) return;
+  btn.classList.remove("save-pending", "save-saving", "save-saved", "save-error");
+  if (state === "saving") {
+    btn.textContent = "↻";
+    btn.classList.add("save-saving");
+    btn.title = "Saving…";
+  } else if (state === "saved") {
+    btn.textContent = "✓";
+    btn.classList.add("save-saved");
+    btn.title = "All changes saved";
+  } else if (state === "pending") {
+    btn.textContent = "↻";
+    btn.classList.add("save-pending");
+    btn.title = "Unsaved changes";
+  } else if (state === "error") {
+    btn.textContent = "!";
+    btn.classList.add("save-error");
+    btn.title = "Save failed";
+  } else {
+    btn.textContent = "↻";
+    btn.title = "Save (Ctrl+S)";
+  }
 }
 function showEl(id) { const e = document.getElementById(id); if (e) e.style.display = "block"; }
 function hideEl(id) { const e = document.getElementById(id); if (e) e.style.display = "none"; }

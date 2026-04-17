@@ -118,11 +118,16 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .topbar-btn-primary.blue  { background: #0d3557; color: #64b5f6; }
 .topbar-btn-primary.blue:hover  { background: #174a73; }
 
-.save-status               { font-size: 11px; color: var(--editor-muted); transition: color .2s; }
-.save-status--pending      { color: #aaa; }
-.save-status--saving       { color: var(--editor-accent); }
-.save-status--saved        { color: #7FD89A; }
-.save-status--error        { color: #FF8888; }
+/* Icon-only save button */
+.topbar-btn-icon { width: 32px; padding: 0; font-size: 16px; }
+
+#btnSave                     { transition: background .12s, color .12s; }
+#btnSave.save-pending        { color: #aaa; }
+#btnSave.save-saving         { color: var(--editor-accent); animation: save-spin .8s linear infinite; }
+#btnSave.save-saved          { background: #1A5530; color: #7FD89A; }
+#btnSave.save-error          { background: #4A1010; color: #FF8888; }
+
+@keyframes save-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .darshan-switcher { display: flex; gap: 4px; align-items: center; }
 .topbar-btn-switch {
