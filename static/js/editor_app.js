@@ -1059,6 +1059,8 @@ function onSelectionChange(e) {
   // Auto-activate the artboard this object belongs to
   if (d.frameId && d.frameId !== activeFrameId) activateArtboard(d.frameId);
 
+  _syncLayerHighlight(obj);
+
   if (d.type === "slot-image") {
     const state = ArtboardMap[d.frameId];
     if (state) state.selectedSlotIdx = d.slotIndex;
@@ -1091,6 +1093,7 @@ function onSelectionCleared() {
   hideEl("blendControls");  showEl("blendHint");
   hideEl("transformControls"); showEl("transformHint");
   hideEl("selectedTextEdit");
+  _syncLayerHighlight(null);
 }
 
 function showSlotInfoInRight(obj) {
@@ -1198,10 +1201,13 @@ function refreshLayersPanel() {
   });
   if (!objs.length) { list.innerHTML = "<p class='filter-hint'>No objects</p>"; return; }
 
+  const activeObj = canvas.getActiveObject();
   [...objs].reverse().forEach(obj => {
     const d    = obj.data || {};
     const item = document.createElement("div");
-    item.className = "layer-item";
+    item._fabricObj = obj;  // store ref for _syncLayerHighlight
+    const selectable = d.type !== "frame-overlay" && d.type !== "slot-placeholder";
+    item.className = "layer-item" + (obj === activeObj && selectable ? " layer-item--active" : "");
     const icon = d.type === "slot-image"    ? "📷"
                : d.type === "text-overlay"  ? "T"
                : d.type === "frame-overlay" ? "🖼"
@@ -1212,13 +1218,21 @@ function refreshLayersPanel() {
                : d.type === "frame-overlay"? "Frame Overlay"
                : "Object";
     item.innerHTML = `<span class="layer-icon">${icon}</span><span class="layer-name">${name}</span>`;
-    item.addEventListener("click", () => {
-      if (d.type !== "frame-overlay" && d.type !== "slot-placeholder") {
+    if (selectable) {
+      item.addEventListener("click", () => {
         canvas.setActiveObject(obj);
         canvas.renderAll();
-      }
-    });
+        _syncLayerHighlight(obj);
+      });
+    }
     list.appendChild(item);
+  });
+}
+
+function _syncLayerHighlight(activeObj) {
+  const target = activeObj ?? canvas.getActiveObject();
+  document.querySelectorAll("#layersList .layer-item").forEach(item => {
+    item.classList.toggle("layer-item--active", item._fabricObj === target);
   });
 }
 

@@ -501,7 +501,9 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
   cursor: pointer; font-size: 11px; color: var(--editor-muted);
   transition: background .1s;
 }
-.layer-item:hover { background: var(--editor-hover); color: var(--editor-text); }
+.layer-item:hover         { background: var(--editor-hover); color: var(--editor-text); }
+.layer-item--active       { background: #2A3A28 !important; color: #7FD89A !important; }
+.layer-item--active:hover { background: #344530 !important; }
 .layer-icon { font-size: 13px; flex-shrink: 0; }
 .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-layers-refresh {
