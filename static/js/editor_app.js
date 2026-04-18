@@ -221,6 +221,7 @@ document.addEventListener("DOMContentLoaded", () => {
   activateArtboard(window.ARTBOARDS[0].id);
   renderArtboardListPanel();
   bindExportSelector();
+  bindQCModal();
   // Fit all artboards into view on startup
   requestAnimationFrame(fitAll);
 });
@@ -2308,7 +2309,15 @@ function bindArtboardTabs() {
 // ─────────────────────────────────────────────────────────────────
 function bindTopBar() {
   document.getElementById("btnSave")?.addEventListener("click",   saveSession);
-  document.getElementById("btnExport")?.addEventListener("click",    () => exportFrame(activeFrameId));
+  document.getElementById("btnExport")?.addEventListener("click", () => {
+    const state = ArtboardMap[activeFrameId];
+    if (!state) return;
+    const hasPhoto = canvas.getObjects().some(o =>
+      o.data?.frameId === activeFrameId && o.data?.type === "slot-image"
+    );
+    if (!hasPhoto) { notify("Upload at least one photo first", "info"); return; }
+    _runQCExport([state]);
+  });
   document.getElementById("btnExportAll")?.addEventListener("click", () => exportAll());
   document.getElementById("btnUndo")?.addEventListener("click",   undo);
   document.getElementById("btnRedo")?.addEventListener("click",   redo);
@@ -2759,20 +2768,181 @@ function bindExportSelector() {
 }
 
 async function exportAll() {
-  // "Export All" opens the selector so the user can choose which frames to include
+  // "Export All" opens the frame selector first
   showExportSelector();
+}
+
+// ─── Quality Control — persistent settings ───────────────────────────────
+// Settings live in localStorage so they survive page reloads.
+// The "⚙ JPEG · 85%" button in the top bar opens the panel directly.
+
+const QC_STORAGE_KEY = "darshan_qc_settings";
+
+function qcLoadPrefs() {
+  try { return JSON.parse(localStorage.getItem(QC_STORAGE_KEY)) || {}; } catch { return {}; }
+}
+function qcSavePrefs(p) {
+  try { localStorage.setItem(QC_STORAGE_KEY, JSON.stringify(p)); } catch {}
+}
+
+function qcGetSettings() {
+  return {
+    format:   document.querySelector("input[name=qcFormat]:checked")?.value || "jpeg",
+    quality:  parseInt(document.getElementById("qcQuality").value),
+    sharpen:  document.getElementById("qcSharpen").checked,
+    targetKb: parseInt(document.querySelector("input[name=qcTarget]:checked")?.value || "0") || null,
+  };
+}
+
+function qcUpdateBadge() {
+  const s   = qcLoadPrefs();
+  const fmt = (s.format || "jpeg").toUpperCase();
+  const q   = s.format === "png" ? "" : ` · ${s.quality || 85}%`;
+  const tgt = s.targetKb ? ` · ≤${s.targetKb >= 1024 ? (s.targetKb/1024)+"MB" : s.targetKb+"KB"}` : "";
+  const badge = document.getElementById("qcBadge");
+  if (badge) badge.textContent = `${fmt}${q}${tgt}`;
+}
+
+function qcUpdateEstimate() {
+  const fmt   = document.querySelector("input[name=qcFormat]:checked")?.value || "jpeg";
+  const q     = parseInt(document.getElementById("qcQuality").value);
+  const state = ArtboardMap[activeFrameId];
+  const px    = state
+    ? state.config.canvas_width * state.config.canvas_height
+    : 3000 * 3000;
+
+  // Heuristics based on real darshan exports (photo-heavy content ~60% complex)
+  let est;
+  if (fmt === "png") {
+    const mb = (px * 3.0 / 1024 / 1024).toFixed(1);
+    est = `~${mb} MB (lossless)`;
+  } else if (fmt === "webp") {
+    const kb = Math.round(px * (q / 100) * 0.18 / 1024);
+    est = kb >= 1024 ? `~${(kb/1024).toFixed(1)} MB` : `~${kb} KB`;
+  } else {
+    const kb = Math.round(px * (q / 100) * 0.40 / 1024);
+    est = kb >= 1024 ? `~${(kb/1024).toFixed(1)} MB` : `~${kb} KB`;
+  }
+  document.getElementById("qcEstSize").textContent = est;
+
+  // Resolution
+  if (state) {
+    document.getElementById("qcNativeRes").textContent =
+      `${state.config.canvas_width} × ${state.config.canvas_height} px`;
+  }
+
+  // Quality hint
+  const hint = document.getElementById("qcQualityHint");
+  if (hint) {
+    if (q >= 90)      hint.textContent = "High quality — larger file";
+    else if (q >= 80) hint.textContent = "Recommended — best quality/size balance";
+    else if (q >= 65) hint.textContent = "Good quality — noticeably smaller file";
+    else              hint.textContent = "Low quality — smallest file, visible compression";
+  }
+
+  // Show/hide quality + target rows
+  const isPNG = fmt === "png";
+  document.getElementById("qcQualityRow").style.display = isPNG ? "none" : "";
+  document.getElementById("qcTargetRow").style.display  = isPNG ? "none" : "";
+}
+
+function bindQCModal() {
+  const modal = document.getElementById("qcModal");
+  if (!modal) return;
+
+  // Open via gear button in top bar
+  document.getElementById("btnQualitySettings")?.addEventListener("click", openQCPanel);
+
+  // Close
+  document.getElementById("qcClose")?.addEventListener("click",  closeQCPanel);
+  document.getElementById("qcCancel")?.addEventListener("click", closeQCPanel);
+
+  // Slider live update
+  document.getElementById("qcQuality")?.addEventListener("input", e => {
+    document.getElementById("qcQualityVal").textContent = e.target.value;
+    qcUpdateEstimate();
+  });
+
+  // Format / target change
+  document.querySelectorAll("input[name=qcFormat], input[name=qcTarget]")
+    .forEach(r => r.addEventListener("change", qcUpdateEstimate));
+
+  // Save settings on any change
+  function persistSettings() {
+    qcSavePrefs(qcGetSettings());
+    qcUpdateBadge();
+  }
+  document.getElementById("qcQuality")?.addEventListener("change", persistSettings);
+  document.getElementById("qcSharpen")?.addEventListener("change", persistSettings);
+  document.querySelectorAll("input[name=qcFormat], input[name=qcTarget]")
+    .forEach(r => r.addEventListener("change", persistSettings));
+
+  // Test Export — runs export on active frame immediately
+  document.getElementById("qcTestExport")?.addEventListener("click", async () => {
+    qcSavePrefs(qcGetSettings());
+    qcUpdateBadge();
+    closeQCPanel();
+    const state = ArtboardMap[activeFrameId];
+    if (!state) { notify("No active frame to test", "info"); return; }
+    await _runQCExport([state]);
+  });
+
+  // Export All from modal
+  document.getElementById("qcConfirm")?.addEventListener("click", () => {
+    qcSavePrefs(qcGetSettings());
+    qcUpdateBadge();
+    closeQCPanel();
+    showExportSelector();
+  });
+
+  // Restore saved settings into UI
+  const saved = qcLoadPrefs();
+  if (saved.format) {
+    const radio = document.querySelector(`input[name=qcFormat][value="${saved.format}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (saved.quality) {
+    document.getElementById("qcQuality").value = saved.quality;
+    document.getElementById("qcQualityVal").textContent = saved.quality;
+  }
+  if (saved.sharpen) document.getElementById("qcSharpen").checked = true;
+  if (saved.targetKb) {
+    const radio = document.querySelector(`input[name=qcTarget][value="${saved.targetKb}"]`);
+    if (radio) radio.checked = true;
+  }
+
+  qcUpdateBadge();
+}
+
+function openQCPanel() {
+  qcUpdateEstimate();
+  // Clear last-export row until a new export runs
+  document.getElementById("qcLastExportRow").style.display = "none";
+  document.getElementById("qcModal").style.display = "flex";
+}
+function closeQCPanel() {
+  document.getElementById("qcModal").style.display = "none";
 }
 
 async function exportSelected(frameIds) {
   const toExport = frameIds.map(id => ArtboardMap[id]).filter(Boolean);
   if (!toExport.length) { notify("No frames to export", "info"); return; }
+  await _runQCExport(toExport);
+}
+
+async function _runQCExport(toExport) {
+  const qcSettings = qcLoadPrefs();
+  // Defaults if never configured
+  if (!qcSettings.format)  qcSettings.format  = "jpeg";
+  if (!qcSettings.quality) qcSettings.quality = 85;
+  if (!qcSettings.sharpen) qcSettings.sharpen = false;
 
   const overlay = document.getElementById("exportOverlay");
   const msg     = document.getElementById("exportMsg");
   overlay.style.display = "flex";
 
-  // ── Step 1: render all frames to blobs ───────────────────────
-  msg.textContent = `Rendering ${toExport.length} frames…`;
+  // ── Step 1: render frames to PNG data-URLs ───────────────────
+  msg.textContent = `Rendering ${toExport.length} frame${toExport.length > 1 ? "s" : ""}…`;
   await new Promise(r => setTimeout(r, 60));
 
   const rendered = [];
@@ -2781,9 +2951,11 @@ async function exportSelected(frameIds) {
       const state = toExport[i];
       msg.textContent = `Rendering ${i + 1} / ${toExport.length}: ${state.config.display_name}…`;
       await new Promise(r => setTimeout(r, 30));
-      const dataURL = _captureArtboard(state);
-      const blob    = await (await fetch(dataURL)).blob();
-      rendered.push({ blob, filename: _exportFilename(state), name: state.config.display_name });
+      rendered.push({
+        dataURL: _captureArtboard(state),
+        state,
+        name: state.config.display_name,
+      });
     }
   } catch (err) {
     notify("Render failed: " + err.message, "error");
@@ -2791,51 +2963,88 @@ async function exportSelected(frameIds) {
     return;
   }
 
-  // ── Step 2: pick a folder once, save all files silently ──────
-  // File System Access API: supported in Chrome 86+, Edge 86+, Safari 15.2+
-  if (window.showDirectoryPicker) {
-    try {
-      msg.textContent = "Pick a folder — all images will save there automatically…";
-      const dirHandle = await window.showDirectoryPicker({ mode: "readwrite", startIn: "downloads" });
+  // ── Step 2: compress via backend ─────────────────────────────
+  const blobs = [];
+  try {
+    for (let i = 0; i < rendered.length; i++) {
+      const { dataURL, state, name } = rendered[i];
+      msg.textContent = `Compressing ${i + 1} / ${rendered.length}: ${name} (${(qcSettings.format||"jpeg").toUpperCase()} ${qcSettings.quality || 85}%)…`;
+      await new Promise(r => setTimeout(r, 20));
 
-      for (let i = 0; i < rendered.length; i++) {
-        const { blob, filename, name } = rendered[i];
-        msg.textContent = `Saving ${i + 1} / ${rendered.length}: ${name}…`;
-        await new Promise(r => setTimeout(r, 20));
-        const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
-        const writable   = await fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      }
-      overlay.style.display = "none";
-      notify(`✓ All ${rendered.length} PNGs saved to the selected folder`, "success");
-      return;
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        notify("Save failed: " + err.message, "error");
-        overlay.style.display = "none";
-        return;
-      }
-      // User cancelled the folder picker — fall through to sequential downloads
+      const baseName = _exportFilename(state).replace(/\.png$/i, "");
+      const resp = await fetch("/api/compress-export/", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_data:     dataURL,
+          format:         qcSettings.format,
+          quality:        qcSettings.quality,
+          sharpen:        qcSettings.sharpen,
+          target_size_kb: qcSettings.targetKb || null,
+          filename:       baseName,
+        }),
+      });
+      const result = await resp.json();
+      if (!result.success) throw new Error(result.error || "Compression failed");
+
+      const blob = await (await fetch(result.data_uri)).blob();
+      blobs.push({ blob, filename: result.filename, name, sizeKb: result.size_kb });
     }
+  } catch (err) {
+    notify("Compression failed: " + err.message, "error");
+    overlay.style.display = "none";
+    return;
   }
 
-  // ── Fallback: sequential individual downloads ────────────────
-  // Chrome/Edge will prompt once "allow multiple downloads" then save all.
-  // Safari will save each to Downloads automatically without prompting.
+  // ── Update last-export info in QC panel ──────────────────────
+  const totalKb  = blobs.reduce((s, b) => s + b.sizeKb, 0);
+  const dispSize = totalKb >= 1024
+    ? `${(totalKb/1024).toFixed(2)} MB`
+    : `${Math.round(totalKb)} KB`;
+  const lastEl  = document.getElementById("qcActualSize");
+  const lastRow = document.getElementById("qcLastExportRow");
+  if (lastEl && lastRow) {
+    lastEl.textContent = blobs.length === 1
+      ? dispSize
+      : `${dispSize} (${blobs.length} files)`;
+    lastRow.style.display = "";
+  }
+
+  // ── Step 3: download ─────────────────────────────────────────
+  // Single file → direct download.
+  // Multiple files → bundle into a .zip using JSZip (no user-gesture
+  // timing issues, works offline, no browser permission dialogs).
   try {
-    msg.textContent = `Downloading ${rendered.length} PNG files…`;
-    for (let i = 0; i < rendered.length; i++) {
-      const { blob, filename, name } = rendered[i];
-      msg.textContent = `Downloading ${i + 1} / ${rendered.length}: ${name}…`;
-      _downloadBlob(blob, filename);
-      await new Promise(r => setTimeout(r, 300));
+    if (blobs.length === 1) {
+      msg.textContent = `Downloading ${blobs[0].name}…`;
+      _downloadBlob(blobs[0].blob, blobs[0].filename);
+      await new Promise(r => setTimeout(r, 200));
+      overlay.style.display = "none";
+      notify(`✓ Exported — ${dispSize}`, "success");
+    } else {
+      // Build zip
+      const zip = new JSZip();
+      for (let i = 0; i < blobs.length; i++) {
+        const { blob, filename, name } = blobs[i];
+        msg.textContent = `Adding to zip ${i + 1} / ${blobs.length}: ${name}…`;
+        await new Promise(r => setTimeout(r, 20));
+        zip.file(filename, blob);
+      }
+      msg.textContent = "Generating zip archive…";
+      const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+
+      // Build a meaningful zip name: darshan_type + date
+      const sess    = window.SESSION || {};
+      const zipDate = (sess.darshan_date || new Date().toISOString().slice(0,10)).replace(/-/g, "");
+      const zipType = sess.darshan_type || "darshan";
+      const zipName = `${zipType}_${zipDate}.zip`;
+
+      _downloadBlob(zipBlob, zipName);
+      overlay.style.display = "none";
+      notify(`✓ Exported ${blobs.length} frames as ${zipName} — ${dispSize} total`, "success");
     }
-    notify(`✓ Exported ${rendered.length} PNG files`, "success");
   } catch (err) {
-    notify("Bulk export failed: " + err.message, "error");
-    console.error("Bulk export error:", err);
-  } finally {
+    notify("Export failed: " + err.message, "error");
     overlay.style.display = "none";
   }
 }

@@ -12,7 +12,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from .models import Composition, DarshanSession, FrameConfig, UploadedPhoto
 from .services.auto_color import auto_correct_image
-from .services.export_image import render_composition
+from .services.export_image import compress_image_bytes, render_composition
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,6 +229,73 @@ def api_export(request, session_id, frame_id):
         return JsonResponse({"success": True, "url": url, "filename": filename})
     except Exception as e:
         return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def api_compress_export(request):
+    """
+    Receive a base64-encoded PNG from the client canvas, apply quality settings
+    using Pillow, and return the compressed image as a base64 data-URI.
+
+    Request JSON:
+        image_data     : "data:image/png;base64,..."  (canvas toDataURL output)
+        format         : "jpeg" | "webp" | "png"       (default: "jpeg")
+        quality        : 1-100                          (default: 85)
+        sharpen        : true | false                   (default: false)
+        target_size_kb : int | null  — binary-search quality to hit this size
+        filename       : suggested download filename (returned as-is)
+    """
+    import base64
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": "Invalid JSON"}, status=400)
+
+    image_data  = data.get("image_data", "")
+    fmt         = (data.get("format", "jpeg") or "jpeg").upper()
+    quality     = max(1, min(100, int(data.get("quality", 85))))
+    sharpen     = bool(data.get("sharpen", False))
+    target_kb   = data.get("target_size_kb")
+    filename    = data.get("filename", "darshan_export")
+
+    if target_kb is not None:
+        target_kb = int(target_kb)
+
+    # Decode base64 data-URI  → raw bytes
+    if "," in image_data:
+        image_data = image_data.split(",", 1)[1]
+    try:
+        raw_bytes = base64.b64decode(image_data)
+    except Exception as e:
+        return JsonResponse({"success": False, "error": f"Bad image data: {e}"}, status=400)
+
+    try:
+        compressed, mime = compress_image_bytes(
+            raw_bytes,
+            fmt=fmt,
+            quality=quality,
+            sharpen=sharpen,
+            target_size_kb=target_kb,
+        )
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+    # Return as base64 data-URI so the browser can download without an extra request
+    ext_map = {"JPEG": "jpg", "WEBP": "webp", "PNG": "png"}
+    ext = ext_map.get(fmt, "jpg")
+    b64 = base64.b64encode(compressed).decode()
+    data_uri = f"data:{mime};base64,{b64}"
+
+    return JsonResponse({
+        "success":    True,
+        "data_uri":   data_uri,
+        "mime":       mime,
+        "size_bytes": len(compressed),
+        "size_kb":    round(len(compressed) / 1024, 1),
+        "filename":   f"{filename}.{ext}",
+    })
 
 
 @csrf_exempt

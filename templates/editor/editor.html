@@ -58,8 +58,11 @@
       </div>
       <div class="topbar-divider"></div>
       <button class="topbar-btn-primary topbar-btn-icon" id="btnSave" data-tip="Save" data-tip-key="Ctrl+S">↻</button>
-      <button class="topbar-btn-primary green"  id="btnExport"         data-tip="Export Active Frame"  data-tip-key="Ctrl+E">Export PNG</button>
-      <button class="topbar-btn-primary green"  id="btnExportAll"      data-tip="Export All Frames"    data-tip-key="Ctrl+Shift+E">Export All</button>
+      <button class="topbar-btn-primary green"  id="btnExport"         data-tip="Export Active Frame"  data-tip-key="Ctrl+E">⬇ Export</button>
+      <button class="topbar-btn-primary green"  id="btnExportAll"      data-tip="Export All Frames"    data-tip-key="Ctrl+Shift+E">⬇ Export All</button>
+      <button class="topbar-btn-qc" id="btnQualitySettings" data-tip="Export Quality Settings">
+        ⚙ <span id="qcBadge">JPEG · 85%</span>
+      </button>
       <div class="topbar-divider"></div>
       <button class="topbar-btn-primary blue"   id="btnSettingsExport" data-tip="Export Settings JSON" data-tip-key="Ctrl+Shift+S">⬇ Settings</button>
       <button class="topbar-btn-primary blue"   id="btnSettingsImport" data-tip="Import Settings JSON">⬆ Import</button>
@@ -382,6 +385,104 @@
       <div class="export-sel-footer">
         <button class="sc-btn-reset" id="exportSelCancel">Cancel</button>
         <button class="sc-btn-done"  id="exportSelConfirm">⬇ Export Selected</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Quality Control Settings Modal ───────────────────────── -->
+  <div class="qc-overlay" id="qcModal" style="display:none">
+    <div class="qc-card">
+      <div class="qc-header">
+        <div>
+          <span class="qc-title">⚙ Export Quality Settings</span>
+          <div class="qc-subtitle">Settings apply to all exports. Saved automatically.</div>
+        </div>
+        <button class="qc-close" id="qcClose">✕</button>
+      </div>
+      <div class="qc-body">
+
+        <!-- Format -->
+        <div class="qc-section-label">Output Format</div>
+        <div class="qc-option-group">
+          <label class="qc-opt">
+            <input type="radio" name="qcFormat" value="jpeg" checked>
+            <span class="qc-opt-inner">
+              <strong>JPEG</strong>
+              <span>Best balance — 2–4 MB typical</span>
+            </span>
+          </label>
+          <label class="qc-opt">
+            <input type="radio" name="qcFormat" value="webp">
+            <span class="qc-opt-inner">
+              <strong>WebP</strong>
+              <span>Smallest size — 1–2 MB typical</span>
+            </span>
+          </label>
+          <label class="qc-opt">
+            <input type="radio" name="qcFormat" value="png">
+            <span class="qc-opt-inner">
+              <strong>PNG</strong>
+              <span>Lossless — 8–11 MB typical</span>
+            </span>
+          </label>
+        </div>
+
+        <!-- Quality slider -->
+        <div id="qcQualityRow">
+          <div class="qc-section-label">
+            Compression Quality — <strong id="qcQualityVal">85</strong>%
+          </div>
+          <div class="qc-slider-wrap">
+            <span class="qc-slider-min">40%</span>
+            <input type="range" id="qcQuality" min="40" max="100" value="85" step="1" class="qc-slider">
+            <span class="qc-slider-max">100%</span>
+          </div>
+          <div class="qc-quality-hint" id="qcQualityHint">Recommended: 85% for best quality/size balance</div>
+        </div>
+
+        <!-- Max file size -->
+        <div id="qcTargetRow">
+          <div class="qc-section-label">Max File Size (per image)</div>
+          <div class="qc-option-group">
+            <label class="qc-opt"><input type="radio" name="qcTarget" value="0" checked> Unlimited</label>
+            <label class="qc-opt"><input type="radio" name="qcTarget" value="4096"> 4 MB</label>
+            <label class="qc-opt"><input type="radio" name="qcTarget" value="2048"> 2 MB</label>
+            <label class="qc-opt"><input type="radio" name="qcTarget" value="1024"> 1 MB</label>
+          </div>
+        </div>
+
+        <!-- Sharpen -->
+        <div class="qc-section-label">Post-processing</div>
+        <label class="qc-toggle-wrap">
+          <input type="checkbox" id="qcSharpen">
+          <span class="qc-toggle-track"></span>
+          <div class="qc-toggle-text">
+            <strong>Sharpen output</strong>
+            <span>Applies UnsharpMask — makes text and edges crisp</span>
+          </div>
+        </label>
+
+        <!-- Live info panel -->
+        <div class="qc-info-panel">
+          <div class="qc-info-row">
+            <span class="qc-info-label">Active frame resolution</span>
+            <span class="qc-info-val" id="qcNativeRes">—</span>
+          </div>
+          <div class="qc-info-row">
+            <span class="qc-info-label">Estimated output size</span>
+            <span class="qc-info-val" id="qcEstSize">—</span>
+          </div>
+          <div class="qc-info-row" id="qcLastExportRow" style="display:none">
+            <span class="qc-info-label">Last export actual size</span>
+            <span class="qc-info-val qc-actual-size" id="qcActualSize">—</span>
+          </div>
+        </div>
+
+      </div>
+      <div class="qc-footer">
+        <button class="sc-btn-reset" id="qcCancel">Close</button>
+        <button class="sc-btn-reset qc-test-btn" id="qcTestExport">▶ Test Export (active frame)</button>
+        <button class="sc-btn-done"  id="qcConfirm">⬇ Export All</button>
       </div>
     </div>
   </div>

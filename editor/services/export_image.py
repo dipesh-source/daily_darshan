@@ -59,15 +59,133 @@ def render_composition(composition) -> str:
                 overlay = overlay.resize((native_w, native_h), Image.LANCZOS)
                 base = Image.alpha_composite(base, overlay)
 
-    # Convert to RGB for final PNG save (lossless, no compression)
+    # Convert to RGB
     final = base.convert("RGB")
 
     export_dir = Path(settings.MEDIA_ROOT) / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     out_path = export_dir / f"{composition.id}.png"
-    final.save(str(out_path), "PNG", compress_level=0)  # 0 = no compression, fastest
+    save_image(final, str(out_path), fmt="PNG", quality=85)
 
     return str(out_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quality-aware save
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_image(
+    img: "Image.Image",
+    path: str,
+    fmt: str = "JPEG",
+    quality: int = 85,
+    sharpen: bool = False,
+    target_size_kb: int | None = None,
+) -> int:
+    """
+    Save *img* to *path* applying quality settings.
+    Returns final file size in bytes.
+
+    fmt       : 'JPEG' | 'WEBP' | 'PNG'
+    quality   : 1-100  (ignored for PNG; use compress_level=6 always)
+    sharpen   : apply UnsharpMask before saving
+    target_size_kb: if set, binary-search quality to stay at or below that size
+                    (only for JPEG/WEBP — PNG is lossless)
+    """
+    from PIL import ImageFilter
+    import io
+
+    fmt = fmt.upper()
+    if fmt not in ("JPEG", "WEBP", "PNG"):
+        fmt = "JPEG"
+
+    # Ensure RGB for JPEG
+    if fmt == "JPEG" and img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    if sharpen:
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=130, threshold=3))
+
+    def _encode(q: int) -> bytes:
+        buf = io.BytesIO()
+        if fmt == "JPEG":
+            img.save(buf, "JPEG", quality=q, optimize=True,
+                     progressive=True, subsampling=0)
+        elif fmt == "WEBP":
+            img.save(buf, "WEBP", quality=q, method=4)
+        else:
+            img.save(buf, "PNG", compress_level=6, optimize=True)
+        return buf.getvalue()
+
+    if target_size_kb and fmt != "PNG":
+        # Binary-search quality so output ≤ target_size_kb
+        lo, hi = 30, quality
+        data = _encode(hi)
+        if len(data) > target_size_kb * 1024:
+            for _ in range(8):          # max 8 iterations → ±0.4% accuracy
+                mid = (lo + hi) // 2
+                candidate = _encode(mid)
+                if len(candidate) <= target_size_kb * 1024:
+                    data = candidate
+                    lo = mid
+                else:
+                    hi = mid
+                if hi - lo <= 1:
+                    break
+        data = _encode(lo)
+    else:
+        data = _encode(quality)
+
+    with open(path, "wb") as f:
+        f.write(data)
+
+    return len(data)
+
+
+def compress_image_bytes(
+    raw_bytes: bytes,
+    fmt: str = "JPEG",
+    quality: int = 85,
+    sharpen: bool = False,
+    target_size_kb: int | None = None,
+) -> tuple[bytes, str]:
+    """
+    Compress raw image bytes (PNG/JPEG/WebP input) and return
+    (compressed_bytes, mime_type).
+    Works entirely in-memory — no disk I/O.
+    """
+    import io
+    from PIL import Image as PILImage
+
+    with PILImage.open(io.BytesIO(raw_bytes)) as img:
+        img.load()
+        # Convert to RGB/RGBA as needed
+        if fmt.upper() == "JPEG" and img.mode in ("RGBA", "P", "LA"):
+            # Flatten transparency onto white background for JPEG
+            bg = PILImage.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            if img.mode in ("RGBA", "LA"):
+                bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[3])
+            img = bg
+        elif img.mode == "P":
+            img = img.convert("RGBA")
+
+        import tempfile, os
+        tmp = tempfile.NamedTemporaryFile(suffix=".tmp", delete=False)
+        tmp.close()
+        try:
+            save_image(img, tmp.name, fmt=fmt, quality=quality,
+                       sharpen=sharpen, target_size_kb=target_size_kb)
+            with open(tmp.name, "rb") as f:
+                data = f.read()
+        finally:
+            os.unlink(tmp.name)
+
+    mime = {"JPEG": "image/jpeg", "WEBP": "image/webp", "PNG": "image/png"}.get(
+        fmt.upper(), "image/jpeg"
+    )
+    return data, mime
 
 
 # ─────────────────────────────────────────────────────────────────────────────

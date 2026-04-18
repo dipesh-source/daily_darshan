@@ -18,4 +18,5 @@ urlpatterns = [
     path("api/session/save/",                         views.api_session_save,    name="api_session_save"),
     path("api/export/<uuid:session_id>/<int:frame_id>/", views.api_export,       name="api_export"),
     path("api/delete-upload/<uuid:photo_id>/",        views.api_delete_upload,   name="api_delete_upload"),
+    path("api/compress-export/",                      views.api_compress_export, name="api_compress_export"),
 ]
