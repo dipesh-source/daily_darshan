@@ -231,14 +231,17 @@ document.addEventListener("DOMContentLoaded", () => {
 function computeLayout() {
   const artboards = window.ARTBOARDS;
 
-  // Uniform scale: fit DISPLAY_HEIGHT to the tallest native height
-  const maxH = Math.max(...artboards.map(a => a.canvas_height));
-  globalScale = DISPLAY_HEIGHT / maxH;
+  // Each artboard scales independently: height always fills DISPLAY_HEIGHT.
+  // This ensures portrait, square, landscape, or any future aspect ratio all
+  // display at the same visual height — slot coordinates scale correctly for
+  // every frame regardless of its native canvas dimensions.
+  globalScale = 1; // kept for legacy reference; not used for per-artboard scale
 
   let curX = 60;  // left margin
   artboards.forEach(ab => {
-    const dispW = Math.round(ab.canvas_width  * globalScale);
-    const dispH = Math.round(ab.canvas_height * globalScale);
+    const perScale = DISPLAY_HEIGHT / ab.canvas_height;  // per-artboard fit
+    const dispW = Math.round(ab.canvas_width  * perScale);
+    const dispH = Math.round(ab.canvas_height * perScale);  // always == DISPLAY_HEIGHT
     const oy    = LABEL_HEIGHT + 40;  // top margin (space for label + top padding)
     ArtboardMap[ab.id] = makeArtboardState(ab, curX, oy, dispW, dispH);
     curX += dispW + ARTBOARD_GAP;
@@ -456,14 +459,43 @@ function createSlotPlaceholders(state) {
 // LOAD ARTBOARD FROM SAVED JSON
 // ─────────────────────────────────────────────────────────────────
 function loadArtboardFromJSON(state, savedJSON) {
-  // The saved JSON was captured on the same scale, same offsets.
-  // We just need to add each object to the shared canvas.
+  // The saved JSON was captured at a specific display scale/offset.
+  // If the layout changed (e.g. a new frame with different aspect ratio was added),
+  // remap every object's position and scale from the saved layout to the current one.
+  const savedScale = savedJSON.display_scale || state.scale;
+  const savedOx    = savedJSON.display_ox    ?? state.ox;
+  const savedOy    = savedJSON.display_oy    ?? state.oy;
+
+  // Remap factor: how much the display scale changed relative to saved state
+  const scaleFactor = state.scale / savedScale;
+  const needsRemap  = Math.abs(scaleFactor - 1) > 0.001
+                   || Math.abs(state.ox - savedOx)   > 0.5
+                   || Math.abs(state.oy - savedOy)   > 0.5;
+
+  function remapObj(obj) {
+    if (!needsRemap) return;
+    const d = obj.data || {};
+    if (d.type === "artboard-bg" || d.type === "frame-overlay") return;
+    // Convert saved canvas position → native coords → current canvas position
+    const nativeX = (obj.left - savedOx) / savedScale;
+    const nativeY = (obj.top  - savedOy) / savedScale;
+    obj.set({
+      left:   state.ox + nativeX * state.scale,
+      top:    state.oy + nativeY * state.scale,
+      scaleX: (obj.scaleX || 1) * scaleFactor,
+      scaleY: (obj.scaleY || 1) * scaleFactor,
+    });
+    if (obj.fontSize) obj.set({ fontSize: Math.round(obj.fontSize * scaleFactor) });
+    obj.setCoords();
+  }
+
   const objs = savedJSON.objects || [];
   fabric.util.enlivenObjects(objs, loaded => {
     loaded.forEach(obj => {
       const d = obj.data || {};
       // Frame overlays are NEVER restored from saved JSON — always reload fresh from server
       if (d.type === "frame-overlay") return;
+      remapObj(obj);
       canvas.add(obj);
       if (d.type === "slot-image" && d.frameId === state.frameId) {
         state.slotImages[d.slotIndex] = obj;
@@ -485,21 +517,7 @@ function loadArtboardFromJSON(state, savedJSON) {
   // Re-create placeholders for any slot that has no image
   state.config.slots.forEach(slot => {
     if (!state.slotImages[slot.index]) {
-      // Only placeholder for this slot
-      const s  = state.scale;
-      const sx = state.ox + slot.x * s;
-      const sy = state.oy + slot.y * s;
-      const sw = slot.w * s;
-      const sh = slot.h * s;
-      const sr = (slot.radius || 0) * s;
-      const bg = new fabric.Rect({
-        left: sx, top: sy, width: sw, height: sh, rx: sr, ry: sr,
-        fill: "#2A1E10", stroke: null, strokeWidth: 0,
-        selectable: false, evented: true, hoverCursor: "pointer",
-        data: { type: "slot-placeholder", frameId: state.frameId, slotIndex: slot.index },
-      });
-      canvas.add(bg);
-      state.placeholders.push(bg);
+      restorePlaceholderForSlot(state, slot.index);
     }
   });
 }
@@ -736,15 +754,13 @@ function normalizeSlotImageObject(state, slot, img) {
     dirty:          true,
     lockUniScaling: true,   // proportional scaling only — no stretching
   });
-  // Hide the 4 middle edge handles (←→↑↓) — corners only for proportional resize.
-  img.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false });
 
-  // Move the rotation handle to the top-right corner (just outside the bounding
-  // box) so it's easy to grab without obscuring the image center.
-  // Only do this once per img instance to avoid re-allocating on every filter call.
+  // Set up per-instance controls once per img instance.
+  // MUST happen before setControlsVisibility, otherwise the replacement
+  // img.controls = Object.assign(...) would undo the visibility settings.
   if (!img._cornerRotationSet) {
     img._cornerRotationSet = true;
-    // Create a per-instance controls map so we only affect this image
+    // Shallow-copy prototype controls so changes only affect this instance
     img.controls = Object.assign({}, fabric.Object.prototype.controls);
     const mtrBase = fabric.Object.prototype.controls.mtr;
     if (mtrBase) {
@@ -762,6 +778,10 @@ function normalizeSlotImageObject(state, slot, img) {
       });
     }
   }
+
+  // Hide the 4 middle edge handles (←→↑↓) — corners only for proportional resize.
+  // Called AFTER controls setup so the visibility flags apply to the per-instance map.
+  img.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false });
 
   ensureSlotImageCoverage(state, slot, img);
 }
