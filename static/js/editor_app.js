@@ -3414,6 +3414,7 @@ const SHORTCUT_DEFS = [
   { id:"focusFrame",      cat:"View",   label:"Focus Active Frame",      def:"ctrl+0"            },
   { id:"zoomIn",          cat:"View",   label:"Zoom In",                 def:"="                 },
   { id:"zoomOut",         cat:"View",   label:"Zoom Out",                def:"-"                 },
+  { id:"panHold",         cat:"Tools",  label:"Pan Canvas (hold key + drag)", def:" "            },
   // Canvas interactions — non-remappable, documented for reference
   { id:"zoomScroll",      cat:"Canvas", label:"Zoom to cursor",          def:"Ctrl + Scroll",    noRemap: true },
   { id:"panVScroll",      cat:"Canvas", label:"Pan vertically",          def:"Scroll",           noRemap: true },
@@ -3442,7 +3443,8 @@ function _normalizeKey(e) {
   if (e.ctrlKey || e.metaKey) p.push("ctrl");
   if (e.shiftKey && !["Shift"].includes(e.key)) p.push("shift");
   if (e.altKey) p.push("alt");
-  const k = e.key.toLowerCase();
+  // Normalise Space to a literal " " so it round-trips cleanly
+  const k = e.key === " " ? " " : e.key.toLowerCase();
   if (!["control","meta","shift","alt"].includes(k)) p.push(k);
   return p.join("+");
 }
@@ -3452,16 +3454,71 @@ function _is(e, id) {
 // Format a stored key string for display
 function _fmtKey(k) {
   return k.split("+").map(p =>
-    p === "ctrl" ? "Ctrl" : p === "shift" ? "Shift" : p === "alt" ? "Alt" :
+    p === "ctrl"  ? "Ctrl"  :
+    p === "shift" ? "Shift" :
+    p === "alt"   ? "Alt"   :
+    p === " "     ? "Space" :
     p.startsWith("arrow") ? "↑↓←→"[["arrowup","arrowdown","arrowleft","arrowright"].indexOf(p)] || p :
     p.charAt(0).toUpperCase() + p.slice(1)
   ).join(" + ");
 }
 
+// ── Space-bar hold-to-pan state ──────────────────────────────────
+let _panHoldActive  = false;   // space is currently held
+let _panHoldPrev    = null;    // tool that was active before space was pressed
+
+function _panHoldKey(e) {
+  // The stored shortcut for panHold (default " " = Space)
+  const panKey = _shortcuts["panHold"] ?? " ";
+  // We compare e.key directly (not via _normalizeKey) because
+  // _normalizeKey lower-cases " " to " " which is fine, but we
+  // also want to support remapped single keys like "space".
+  const eKey = e.key === " " ? " " : e.key.toLowerCase();
+  return eKey === panKey || e.code === "Space" && panKey === " ";
+}
+
 function bindKeyboard() {
   _loadShortcuts();
+
+  // Space hold: keydown → switch to hand; keyup → restore previous tool
   document.addEventListener("keydown", e => {
     if (isTyping()) return;
+    if (!_panHoldActive && _panHoldKey(e)) {
+      e.preventDefault();
+      _panHoldActive = true;
+      _panHoldPrev   = currentTool;
+      setTool("hand");
+      setActiveTool("hand");
+      // Show grab cursor on canvas area immediately
+      canvas.defaultCursor = "grab";
+      canvas.requestRenderAll();
+    }
+  });
+  document.addEventListener("keyup", e => {
+    if (_panHoldActive && _panHoldKey(e)) {
+      _panHoldActive = false;
+      isPanning = false;
+      const prev = _panHoldPrev || "select";
+      setTool(prev);
+      setActiveTool(prev);
+      _panHoldPrev = null;
+    }
+  });
+  // Also cancel if window loses focus (e.g. alt-tab)
+  window.addEventListener("blur", () => {
+    if (_panHoldActive) {
+      _panHoldActive = false;
+      isPanning = false;
+      const prev = _panHoldPrev || "select";
+      setTool(prev);
+      setActiveTool(prev);
+      _panHoldPrev = null;
+    }
+  });
+
+  document.addEventListener("keydown", e => {
+    if (isTyping()) return;
+    if (_panHoldActive) return;  // space is active — eat nothing else
 
     // ── Shortcut-registry actions ─────────────────────────────
     if (_normalizeKey(e) === "g") { e.preventDefault(); _guidesVisible = !_guidesVisible; document.getElementById("btnToggleGuides")?.classList.toggle("active", _guidesVisible); canvas.renderAll(); return; }
@@ -3576,6 +3633,12 @@ function showShortcutsModal() {
 function _scKeyListener(e) {
   if (!_scRecording) return;
   e.preventDefault(); e.stopPropagation();
+  // Allow Enter to confirm current choice (without changing it)
+  if (e.key === "Enter") {
+    _scRecording.el.classList.remove("recording");
+    _scRecording.el.textContent = _fmtKey(_shortcuts[_scRecording.id]);
+    _scRecording = null; return;
+  }
   const key = _normalizeKey(e);
   if (key === "escape") {
     _scRecording.el.classList.remove("recording");
