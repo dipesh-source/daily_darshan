@@ -714,6 +714,61 @@ function imgNaturalDims(fabricImg) {
   return { w, h };
 }
 
+// Proportional-scale action handler for ml / mr controls.
+// Delegates to Fabric's built-in scalingX (which handles left vs right via
+// transform.originX) then forces scaleY to maintain the original aspect ratio —
+// exactly like Photoshop's proportional resize from a side handle.
+function _proportionalScaleX(eventData, transform, x, y) {
+  const target  = transform.target;
+  const cu      = fabric.controlsUtils;
+  if (!cu || !cu.scalingX) return false;   // safety: Fabric utils not available
+
+  // Delegate horizontal scale computation to Fabric's built-in handler
+  const changed = cu.scalingX(eventData, transform, x, y);
+
+  if (changed) {
+    // Restore the original aspect ratio using the scale values captured at
+    // drag-start (transform.original is set once when the drag begins).
+    const origScaleX = transform.original.scaleX || 1;
+    const origScaleY = transform.original.scaleY || 1;
+    if (!target.lockScalingY) {
+      target.set("scaleY", target.scaleX * (origScaleY / origScaleX));
+    }
+  }
+  return changed;
+}
+
+// Render callback for the side resize handle — green circle with ↔ arrows.
+// Distinct from the blue rotate handle so the user knows which is which.
+function _drawResizeHandle(ctx, left, top) {
+  const r = 7;
+  ctx.save();
+  ctx.translate(left, top);
+  // Background circle
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = "#2E7D32";   // dark-green
+  ctx.fill();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // ↔ left arrow
+  ctx.beginPath();
+  ctx.moveTo(-1, 0); ctx.lineTo(-4, 0);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.4; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-4, -2); ctx.lineTo(-6, 0); ctx.lineTo(-4, 2);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
+  // ↔ right arrow
+  ctx.beginPath();
+  ctx.moveTo(1, 0); ctx.lineTo(4, 0);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.4; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(4, -2); ctx.lineTo(6, 0); ctx.lineTo(4, 2);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.restore();
+}
+
 // Render callback for the custom rotation handle (blue circle with arrow).
 // Called by Fabric for each control render pass.
 function _drawRotateHandle(ctx, left, top) {
@@ -763,9 +818,11 @@ function normalizeSlotImageObject(state, slot, img) {
     img._cornerRotationSet = true;
     // Shallow-copy prototype controls so changes only affect this instance
     img.controls = Object.assign({}, fabric.Object.prototype.controls);
+
     const mtrBase = fabric.Object.prototype.controls.mtr;
     if (mtrBase) {
-      // Top-right corner — existing rotate handle
+      // ── Rotate handles ───────────────────────────────────────────
+      // Top-right corner rotate handle (original)
       img.controls.mtr = new fabric.Control({
         x:              0.5,
         y:             -0.5,
@@ -778,12 +835,12 @@ function normalizeSlotImageObject(state, slot, img) {
         cornerSize:     18,
         withConnection: false,
       });
-      // Middle-left rotate handle (the red-spot position on left side)
+      // Middle-left rotate handle — sits 16 px OUTSIDE the left edge
       img.controls.mtrLeft = new fabric.Control({
-        x:              -0.5,
-        y:               0,
-        offsetX:        -14,
-        offsetY:          0,
+        x:             -0.5,
+        y:              0,
+        offsetX:       -16,
+        offsetY:         0,
         cursorStyle:   "crosshair",
         actionHandler:  mtrBase.actionHandler,
         actionName:    "rotate",
@@ -791,12 +848,12 @@ function normalizeSlotImageObject(state, slot, img) {
         cornerSize:     18,
         withConnection: false,
       });
-      // Middle-right rotate handle (the red-spot position on right side)
+      // Middle-right rotate handle — sits 16 px OUTSIDE the right edge
       img.controls.mtrRight = new fabric.Control({
-        x:               0.5,
-        y:               0,
-        offsetX:         14,
-        offsetY:          0,
+        x:              0.5,
+        y:              0,
+        offsetX:        16,
+        offsetY:         0,
         cursorStyle:   "crosshair",
         actionHandler:  mtrBase.actionHandler,
         actionName:    "rotate",
@@ -805,12 +862,39 @@ function normalizeSlotImageObject(state, slot, img) {
         withConnection: false,
       });
     }
+
+    // ── Proportional-resize handles on left / right edges ────────
+    // These replace the default ml/mr (which stretch only X).
+    // _proportionalScaleX scales both axes together = no stretch.
+    img.controls.ml = new fabric.Control({
+      x:             -0.5,
+      y:              0,
+      offsetX:        0,
+      offsetY:        0,
+      cursorStyle:   "ew-resize",
+      actionHandler:  _proportionalScaleX,
+      actionName:    "scale",
+      render:         _drawResizeHandle,
+      cornerSize:     18,
+      withConnection: false,
+    });
+    img.controls.mr = new fabric.Control({
+      x:              0.5,
+      y:              0,
+      offsetX:        0,
+      offsetY:        0,
+      cursorStyle:   "ew-resize",
+      actionHandler:  _proportionalScaleX,
+      actionName:    "scale",
+      render:         _drawResizeHandle,
+      cornerSize:     18,
+      withConnection: false,
+    });
   }
 
-  // Hide the 4 default middle edge resize handles (←→↑↓) — our custom
-  // mtrLeft / mtrRight replace them for rotation. Corners remain for resize.
-  // Called AFTER controls setup so the visibility flags apply to the per-instance map.
-  img.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false });
+  // Hide only top/bottom edge handles — left/right are now our custom resize icons.
+  // Called AFTER controls setup so flags apply to the per-instance map.
+  img.setControlsVisibility({ mt: false, mb: false });
 
   ensureSlotImageCoverage(state, slot, img);
 }
