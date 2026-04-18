@@ -765,6 +765,7 @@ function normalizeSlotImageObject(state, slot, img) {
     img.controls = Object.assign({}, fabric.Object.prototype.controls);
     const mtrBase = fabric.Object.prototype.controls.mtr;
     if (mtrBase) {
+      // Top-right corner — existing rotate handle
       img.controls.mtr = new fabric.Control({
         x:              0.5,
         y:             -0.5,
@@ -775,12 +776,39 @@ function normalizeSlotImageObject(state, slot, img) {
         actionName:    "rotate",
         render:         _drawRotateHandle,
         cornerSize:     18,
-        withConnection: false,   // no line from top-center to handle
+        withConnection: false,
+      });
+      // Middle-left rotate handle (the red-spot position on left side)
+      img.controls.mtrLeft = new fabric.Control({
+        x:              -0.5,
+        y:               0,
+        offsetX:        -14,
+        offsetY:          0,
+        cursorStyle:   "crosshair",
+        actionHandler:  mtrBase.actionHandler,
+        actionName:    "rotate",
+        render:         _drawRotateHandle,
+        cornerSize:     18,
+        withConnection: false,
+      });
+      // Middle-right rotate handle (the red-spot position on right side)
+      img.controls.mtrRight = new fabric.Control({
+        x:               0.5,
+        y:               0,
+        offsetX:         14,
+        offsetY:          0,
+        cursorStyle:   "crosshair",
+        actionHandler:  mtrBase.actionHandler,
+        actionName:    "rotate",
+        render:         _drawRotateHandle,
+        cornerSize:     18,
+        withConnection: false,
       });
     }
   }
 
-  // Hide the 4 middle edge handles (←→↑↓) — corners only for proportional resize.
+  // Hide the 4 default middle edge resize handles (←→↑↓) — our custom
+  // mtrLeft / mtrRight replace them for rotation. Corners remain for resize.
   // Called AFTER controls setup so the visibility flags apply to the per-instance map.
   img.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false });
 
