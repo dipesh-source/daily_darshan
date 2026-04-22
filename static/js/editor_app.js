@@ -314,6 +314,7 @@ function initCanvas() {
     if (slotBinding) {
       e.target.data = { ...(e.target.data || {}), manualCrop: true };
       ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, e.target);
+      _propagateCropToSyncedSlots(e.target, slotBinding.state, slotBinding.slot);
     }
     pushUndo();
     scheduleAutosave();
@@ -927,6 +928,66 @@ function getSlotForImageObject(obj) {
   return { state, slot };
 }
 
+// Propagate pan/zoom crop from one slot-image to all synced counterparts.
+// Uses slot-relative coordinates so the crop maps correctly across different slot sizes.
+function _propagateCropToSyncedSlots(srcImg, srcState, srcSlot) {
+  const { frameId, slotIndex } = srcImg.data || {};
+  const targets = getSyncTargets(frameId, slotIndex);
+  if (!targets.length) return;
+
+  // Source slot dimensions in display-pixels
+  const srcSlotW = srcSlot.w * srcState.scale;
+  const srcSlotH = srcSlot.h * srcState.scale;
+  const srcSlotCX = srcState.ox + srcSlot.x * srcState.scale + srcSlotW / 2;
+  const srcSlotCY = srcState.oy + srcSlot.y * srcState.scale + srcSlotH / 2;
+
+  // Natural image dimensions
+  const { w: natW, h: natH } = imgNaturalDims(srcImg);
+
+  // Min scale the source image needs to cover its slot
+  const srcMinScale = getRequiredSlotImageScale(srcSlotW, srcSlotH, natW, natH);
+
+  // How much extra zoom the user applied beyond the minimum
+  const extraScaleRatio = srcImg.scaleX / srcMinScale;
+
+  // Pan offset from slot center, normalised to slot size (–1..1 range = half-slot)
+  const relPanX = (srcImg.left - srcSlotCX) / srcSlotW;
+  const relPanY = (srcImg.top  - srcSlotCY) / srcSlotH;
+
+  targets.forEach(t => {
+    const tState = ArtboardMap[t.frameId];
+    if (!tState) return;
+    const tSlot = tState.config.slots.find(s => s.index === t.slotIndex);
+    if (!tSlot) return;
+    const tImg = tState.slotImages[t.slotIndex];
+    if (!tImg) return;
+
+    const tSlotW = tSlot.w * tState.scale;
+    const tSlotH = tSlot.h * tState.scale;
+    const tSlotCX = tState.ox + tSlot.x * tState.scale + tSlotW / 2;
+    const tSlotCY = tState.oy + tSlot.y * tState.scale + tSlotH / 2;
+
+    const { w: tNatW, h: tNatH } = imgNaturalDims(tImg);
+    const tMinScale = getRequiredSlotImageScale(tSlotW, tSlotH, tNatW, tNatH);
+    const tNewScale = tMinScale * extraScaleRatio;
+
+    tImg.set({
+      scaleX: Math.max(tNewScale, tMinScale),
+      scaleY: Math.max(tNewScale, tMinScale),
+      left:   tSlotCX + relPanX * tSlotW,
+      top:    tSlotCY + relPanY * tSlotH,
+      angle:  srcImg.angle,
+      flipX:  srcImg.flipX,
+      flipY:  srcImg.flipY,
+    });
+    tImg.data = { ...(tImg.data || {}), manualCrop: true };
+    ensureSlotImageCoverage(tState, tSlot, tImg);
+    tImg.setCoords();
+  });
+
+  canvas.renderAll();
+}
+
 function removePlaceholdersForSlot(state, slotIndex) {
   // Remove from tracked array
   state.placeholders = state.placeholders.filter(p => {
@@ -1538,9 +1599,23 @@ function syncTransformPanel(obj) {
   document.getElementById("tfRot").value = Math.round(obj.angle || 0);
 }
 
+// Copy slotFilters from source slot to all synced slots and re-apply.
+function _propagateFiltersToSyncedSlots(frameId, slotIndex) {
+  const srcFilters = ArtboardMap[frameId]?.slotFilters[slotIndex];
+  if (!srcFilters) return;
+  const targets = getSyncTargets(frameId, slotIndex);
+  targets.forEach(t => {
+    const tState = ArtboardMap[t.frameId];
+    if (!tState) return;
+    tState.slotFilters[t.slotIndex] = { ...srcFilters };
+    flushSlotFilterPreview(t.frameId, t.slotIndex);
+  });
+}
+
 function bindColorControls() {
   const commitFilterChange = (frameId, slotIndex) => {
     flushSlotFilterPreview(frameId, slotIndex);
+    _propagateFiltersToSyncedSlots(frameId, slotIndex);
     pushUndo();
     scheduleAutosave();
   };
@@ -1664,13 +1739,14 @@ function bindColorControls() {
     ArtboardMap[frameId].slotFilters[slotIndex] = defaultFilters();
     syncColorPanel(frameId, slotIndex);
     syncBlendPanel(frameId, slotIndex);
-    commitFilterChange(frameId, slotIndex);
+    commitFilterChange(frameId, slotIndex); // already calls _propagateFiltersToSyncedSlots
   });
 }
 
 function bindBlendControls() {
   const commitBlendChange = (frameId, slotIndex) => {
     flushSlotFilterPreview(frameId, slotIndex);
+    _propagateFiltersToSyncedSlots(frameId, slotIndex);
     pushUndo();
     scheduleAutosave();
   };
@@ -1714,6 +1790,7 @@ function bindTransformControls() {
     if (slotBinding) {
       obj.data = { ...(obj.data || {}), manualCrop: true };
       ensureSlotImageCoverage(slotBinding.state, slotBinding.slot, obj);
+      _propagateCropToSyncedSlots(obj, slotBinding.state, slotBinding.slot);
     }
     obj.setCoords(); canvas.renderAll(); pushUndo(); scheduleAutosave();
   };
@@ -2844,15 +2921,48 @@ function showExportSelector() {
     const totalSlots = state.config.slots.length;
     const ready = photoCount > 0;
 
+    // Build thumbnail — capture always so overlay is visible even with no photos
+    let thumbDataURL = null;
+    try { thumbDataURL = _captureArtboard(state); } catch (_) {}
+
     const row = document.createElement("label");
     row.className = "export-sel-row" + (ready ? " ready" : "");
-    row.innerHTML = `
-      <input type="checkbox" value="${state.frameId}" ${ready ? "checked" : "disabled"}>
+
+    // thumbnail element
+    const thumbEl = document.createElement("div");
+    thumbEl.className = "export-sel-thumb";
+    if (thumbDataURL) {
+      const img = document.createElement("img");
+      img.src = thumbDataURL;
+      img.alt = state.config.display_name;
+      thumbEl.appendChild(img);
+    } else {
+      const ph = document.createElement("span");
+      ph.className = "export-sel-thumb-placeholder";
+      ph.textContent = "🖼";
+      thumbEl.appendChild(ph);
+    }
+
+    // checkbox
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = state.frameId;
+    if (ready) cb.checked = true;
+    else cb.disabled = true;
+
+    // info block (name + dim + status stacked)
+    const info = document.createElement("div");
+    info.className = "export-sel-info";
+    info.innerHTML = `
       <span class="export-sel-name">${state.config.display_name}</span>
       <span class="export-sel-dim">${state.config.canvas_width}×${state.config.canvas_height}</span>
       <span class="export-sel-status ${ready ? "ready" : "empty"}">
         ${ready ? `${photoCount} / ${totalSlots} photo${photoCount !== 1 ? "s" : ""}` : "No photos"}
       </span>`;
+
+    row.appendChild(cb);
+    row.appendChild(thumbEl);
+    row.appendChild(info);
     list.appendChild(row);
   });
 
