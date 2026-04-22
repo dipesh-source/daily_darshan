@@ -563,26 +563,29 @@ function bringOverlayToFront(state) {
 // When a photo is loaded into any slot in a group, it mirrors to all other
 // members of the same group within the same darshan_type.
 //
-//  Group 0 — tall portrait   : full/0  ↔  3in1_l/0  ↔  3in1_r/2
-//  Group 1 — top small pair  : 3in1_l/1  ↔  3in1_r/0
-//  Group 2 — bottom small pair: 3in1_l/2  ↔  3in1_r/1
+//  3in1_R slot numbering: 0=big right (Slot 1), 1=top-left (Slot 2), 2=bottom-left (Slot 3)
+//  3in1_L slot numbering: 0=big left  (Slot 1), 1=top-right (Slot 2), 2=bottom-right (Slot 3)
+//
+//  Group 0 — tall portrait   : full/0  ↔  3in1_l/0  ↔  3in1_r/0
+//  Group 1 — top small pair  : 3in1_l/1  ↔  3in1_r/1
+//  Group 2 — bottom small pair: 3in1_l/2  ↔  3in1_r/2
 // ─────────────────────────────────────────────────────────────────
 const SYNC_GROUPS = [
   // Tall portrait (full frame + tall slot in 3-in-1 L + R)
   [
     { frame_type: "full",   slotIndex: 0 },
     { frame_type: "3in1_l", slotIndex: 0 },
-    { frame_type: "3in1_r", slotIndex: 2 },
+    { frame_type: "3in1_r", slotIndex: 0 },
   ],
   // Top small — 3in1_L top-right  ↔  3in1_R top-left
   [
     { frame_type: "3in1_l", slotIndex: 1 },
-    { frame_type: "3in1_r", slotIndex: 0 },
+    { frame_type: "3in1_r", slotIndex: 1 },
   ],
   // Bottom small — 3in1_L bottom-right  ↔  3in1_R bottom-left
   [
     { frame_type: "3in1_l", slotIndex: 2 },
-    { frame_type: "3in1_r", slotIndex: 1 },
+    { frame_type: "3in1_r", slotIndex: 2 },
   ],
 ];
 

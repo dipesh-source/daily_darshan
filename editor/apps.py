@@ -28,11 +28,11 @@ def populate_frame_configs(sender, **kwargs):
     ]
     #
     # 3-in-1 Right  canvas=2189x2051
-    #   slots 0+1 = two left panes stacked,  slot 2 = big right pane
+    #   slot 0 = big right pane (Slot 1),  slot 1 = top-left (Slot 2),  slot 2 = bottom-left (Slot 3)
     IN1R_SLOTS = [
-        {"index": 0, "x": 111,  "y": 190,  "w": 929, "h": 817,  "radius": 142},
-        {"index": 1, "x": 113,  "y": 1043, "w": 929, "h": 817,  "radius": 149},
-        {"index": 2, "x": 1151, "y": 190,  "w": 928, "h": 1720, "radius": 149},
+        {"index": 0, "x": 1151, "y": 190,  "w": 928, "h": 1720, "radius": 149},
+        {"index": 1, "x": 111,  "y": 190,  "w": 929, "h": 817,  "radius": 142},
+        {"index": 2, "x": 113,  "y": 1043, "w": 929, "h": 817,  "radius": 149},
     ]
 
     FRAMES = [
