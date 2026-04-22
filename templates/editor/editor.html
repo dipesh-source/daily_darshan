@@ -5,6 +5,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/editor.css' %}?v={{ asset_version }}">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
 <!-- Multilingual fonts: English · Hindi (Devanagari) · Gujarati -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -58,14 +59,14 @@
       </div>
       <div class="topbar-divider"></div>
       <button class="topbar-btn-primary topbar-btn-icon" id="btnSave" data-tip="Save" data-tip-key="Ctrl+S">↻</button>
-      <button class="topbar-btn-primary green"  id="btnExport"         data-tip="Export Active Frame"  data-tip-key="Ctrl+E">⬇ Export</button>
-      <button class="topbar-btn-primary green"  id="btnExportAll"      data-tip="Export All Frames"    data-tip-key="Ctrl+Shift+E">⬇ Export All</button>
+      <button class="topbar-btn-primary green topbar-btn-icon" id="btnExport"    data-tip="Export Active Frame"  data-tip-key="Ctrl+E"><i class="fa-solid fa-file-arrow-down"></i></button>
+      <button class="topbar-btn-primary green topbar-btn-icon" id="btnExportAll" data-tip="Export All Frames"    data-tip-key="Ctrl+Shift+E"><i class="fa-solid fa-images"></i></button>
       <button class="topbar-btn-qc" id="btnQualitySettings" data-tip="Export Quality Settings">
-        ⚙ <span id="qcBadge">JPEG · 85%</span>
+        <span id="qcBadge">JPEG · 85%</span>
       </button>
       <div class="topbar-divider"></div>
-      <button class="topbar-btn-primary blue"   id="btnSettingsExport" data-tip="Export Settings JSON" data-tip-key="Ctrl+Shift+S">⬇ Settings</button>
-      <button class="topbar-btn-primary blue"   id="btnSettingsImport" data-tip="Import Settings JSON">⬆ Import</button>
+      <button class="topbar-btn-primary blue topbar-btn-icon" id="btnSettingsExport" data-tip="Export Settings JSON" data-tip-key="Ctrl+Shift+S"><i class="fa-solid fa-file-export"></i></button>
+      <button class="topbar-btn-primary blue topbar-btn-icon" id="btnSettingsImport" data-tip="Import Settings JSON"><i class="fa-solid fa-file-import"></i></button>
       <input type="file" id="settingsImportInput" accept=".json" style="display:none">
       <div class="topbar-divider"></div>
       <button class="topbar-btn"      id="btnShortcuts" data-tip="Keyboard Shortcuts" data-tip-key="Ctrl+/">⌨</button>
