@@ -1,5 +1,12 @@
 from django.contrib import admin
-from .models import FrameConfig, Composition, UploadedPhoto
+from .models import FrameConfig, Composition, UploadedPhoto, DarshanSession
+
+
+@admin.register(DarshanSession)
+class DarshanSessionAdmin(admin.ModelAdmin):
+    list_display = ["darshan_type", "darshan_date", "title", "created_at"]
+    list_filter = ["darshan_date", "darshan_type"]
+    date_hierarchy = "darshan_date"
 
 
 @admin.register(FrameConfig)
