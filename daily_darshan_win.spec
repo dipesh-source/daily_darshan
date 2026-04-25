@@ -75,6 +75,9 @@ hidden = list(set(cv2_hidden + np_hidden + [
     "editor.services",
     "editor.services.auto_color",
     "editor.services.export_image",
+    "editor.management",
+    "editor.management.commands",
+    "editor.management.commands.populate_frames",
     # ── Pillow ─────────────────────────────────────────────────────────────
     "PIL",
     "PIL.Image",

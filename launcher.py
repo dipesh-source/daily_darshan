@@ -126,6 +126,9 @@ def _run_migrations():
         db_path.unlink(missing_ok=True)
         execute_from_command_line(["manage.py", "migrate", "--run-syncdb"])
 
+    # Seed / update frame configurations after every migration run
+    execute_from_command_line(["manage.py", "populate_frames"])
+
 
 def run_django(port):
     """Run Django's development server (blocking)."""
