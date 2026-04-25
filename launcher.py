@@ -32,6 +32,19 @@ USER_DATA.mkdir(parents=True, exist_ok=True)
 (USER_DATA / "media" / "uploads").mkdir(parents=True, exist_ok=True)
 (USER_DATA / "media" / "exports").mkdir(parents=True, exist_ok=True)
 
+# ── Windows windowed-exe fix ───────────────────────────────────────────────────
+# When built with console=False on Windows, PyInstaller sets sys.stdout and
+# sys.stderr to None.  Django's management commands (migrate, runserver) call
+# self.stdout.write(...) and crash immediately with:
+#   AttributeError: 'NoneType' object has no attribute 'write'
+# Fix: redirect both streams to a persistent log file so they are never None.
+# The log is useful for diagnosing any future issues on end-user machines.
+if getattr(sys, "frozen", False) and sys.stdout is None:
+    _log_path = USER_DATA / "darshan.log"
+    _log = open(_log_path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _log
+    sys.stderr = _log
+
 os.environ["DARSHAN_DB_PATH"]    = str(USER_DATA / "db.sqlite3")
 os.environ["DARSHAN_MEDIA_ROOT"] = str(USER_DATA / "media")
 os.environ["DARSHAN_BASE_DIR"]   = str(BASE_PATH)
