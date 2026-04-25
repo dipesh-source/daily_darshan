@@ -104,7 +104,7 @@ echo [OK] Database ready.
 REM ── STEP 6: Build .exe with PyInstaller ──────────────────────────────────────
 echo.
 echo [Step 6] Building Windows .exe with PyInstaller (takes 2-5 minutes)...
-pyinstaller daily_darshan_win.spec --clean --noconfirm
+pyinstaller daily_darshan_win.spec --noconfirm
 if errorlevel 1 (
     echo [ERROR] PyInstaller build failed. See output above for details.
     pause

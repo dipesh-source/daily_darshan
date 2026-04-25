@@ -86,12 +86,52 @@ def find_free_port(preferred=8765):
     return port, False
 
 
+def _run_migrations():
+    """
+    Run Django migrations safely.
+
+    If the DB contains tables from a previous failed/partial launch
+    (e.g. the first Windows run crashed mid-migrate), the standard migrate
+    command raises "table X already exists".  In that case we delete the
+    corrupt DB file and start fresh — user data is never at risk because a
+    broken DB means the app was never usable.
+    """
+    import sqlite3 as _sqlite3
+    from django.core.management import execute_from_command_line
+
+    db_path = Path(os.environ["DARSHAN_DB_PATH"])
+
+    # Detect a corrupt / partially-initialised DB:
+    # app tables exist but migration-history table is missing.
+    corrupt = False
+    if db_path.exists():
+        try:
+            _con = _sqlite3.connect(str(db_path))
+            _tables = {r[0] for r in _con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            _con.close()
+            has_app   = "editor_darshansession" in _tables
+            has_track = "django_migrations"      in _tables
+            corrupt   = has_app and not has_track
+        except Exception:
+            corrupt = True          # unreadable DB — treat as corrupt
+
+    if corrupt:
+        db_path.unlink(missing_ok=True)
+
+    try:
+        execute_from_command_line(["manage.py", "migrate", "--run-syncdb"])
+    except Exception:
+        # Any other migration failure (e.g. half-applied state) — wipe & retry
+        db_path.unlink(missing_ok=True)
+        execute_from_command_line(["manage.py", "migrate", "--run-syncdb"])
+
+
 def run_django(port):
     """Run Django's development server (blocking)."""
     from django.core.management import execute_from_command_line
 
-    # Run migrations on first launch (no-op if already up to date)
-    execute_from_command_line(["manage.py", "migrate", "--run-syncdb"])
+    _run_migrations()
 
     execute_from_command_line([
         "manage.py", "runserver",
