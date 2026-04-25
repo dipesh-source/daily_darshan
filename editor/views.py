@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .models import Composition, DarshanSession, FrameConfig, UploadedPhoto
-from .services.auto_color import auto_correct_image
+from .services.auto_color import compute_auto_correct_params
 from .services.export_image import compress_image_bytes, render_composition
 
 
@@ -166,11 +166,8 @@ def api_upload_photo(request):
 def api_auto_color(request, photo_id):
     photo = get_object_or_404(UploadedPhoto, pk=photo_id)
     try:
-        adjusted_path = auto_correct_image(photo.image.path)
-        from pathlib import Path
-        rel = Path(adjusted_path).relative_to(django_settings.MEDIA_ROOT)
-        url = request.build_absolute_uri(django_settings.MEDIA_URL + str(rel).replace("\\", "/"))
-        return JsonResponse({"success": True, "url": url})
+        params = compute_auto_correct_params(photo.image.path)
+        return JsonResponse({"success": True, "filter_params": params})
     except Exception as e:
         return JsonResponse({"success": False, "error": str(e)}, status=500)
 

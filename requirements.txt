@@ -2,8 +2,11 @@ altgraph==0.17.5
 asgiref==3.11.1
 Django==5.2.13
 macholib==1.16.4
+numpy>=1.26
+opencv-python-headless>=4.9
 packaging==26.0
 pillow==12.2.0
 pyinstaller==6.19.0
 pyinstaller-hooks-contrib==2026.4
+scikit-image>=0.22
 sqlparse==0.5.5

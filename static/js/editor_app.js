@@ -1664,68 +1664,58 @@ function bindColorControls() {
   document.getElementById("btnAutoColor")?.addEventListener("click", async () => {
     const obj = canvas.getActiveObject();
     if (!obj?.data?.photoId) { notify("Select a slot photo first", "info"); return; }
-    notify("Running auto color correction…", "info");
+    notify("Analysing image…", "info");
     const r = await apiFetch(`/api/auto-color/${obj.data.photoId}/`);
     if (r.success) {
       const { frameId, slotIndex } = obj.data;
+      const p = r.filter_params;
 
-      // Build list: the active object + any synced-slot objects (same tall-portrait group)
+      // Build target list: active slot + any synced slots
       const syncTargets = getSyncTargets(frameId, slotIndex);
-      const allSwaps = [
-        { targetObj: obj, fid: frameId, sid: slotIndex },
-        ...syncTargets
-          .map(t => ({
-            targetObj: ArtboardMap[t.frameId]?.slotImages[t.slotIndex],
-            fid: t.frameId,
-            sid: t.slotIndex,
-          }))
-          .filter(t => t.targetObj),
+      const allTargets = [
+        { fid: frameId, sid: slotIndex },
+        ...syncTargets.map(t => ({ fid: t.frameId, sid: t.slotIndex })),
       ];
 
-      // Load the corrected image once; browser caches it for subsequent swaps
-      fabric.Image.fromURL(r.url, newImg => {
-        allSwaps.forEach(({ targetObj, fid, sid }) => {
-          // Snapshot every transform so position is never disturbed
-          const snap = {
-            left:    targetObj.left,
-            top:     targetObj.top,
-            scaleX:  targetObj.scaleX,
-            scaleY:  targetObj.scaleY,
-            angle:   targetObj.angle,
-            flipX:   targetObj.flipX,
-            flipY:   targetObj.flipY,
-            originX: targetObj.originX,
-            originY: targetObj.originY,
-            clipPath: targetObj.clipPath,
-            data:    { ...targetObj.data },
-          };
+      allTargets.forEach(({ fid, sid }) => {
+        const state = ArtboardMap[fid];
+        if (!state) return;
+        const existing = state.slotFilters[sid] ?? defaultFilters();
+        // Merge computed params; preserve opacity and blend mode the user may have set
+        state.slotFilters[sid] = {
+          ...existing,
+          brightness: p.brightness,
+          contrast:   p.contrast,
+          saturation: p.saturation,
+          gamma_r:    p.gamma_r,
+          gamma_g:    p.gamma_g,
+          gamma_b:    p.gamma_b,
+          sharpen:    p.sharpen,
+          hue:        p.hue,
+          blur:       p.blur,
+          noise:      p.noise,
+          grayscale:  p.grayscale,
+          sepia:      p.sepia,
+          invert:     p.invert,
+          vintage:    p.vintage,
+          polaroid:   p.polaroid,
+          kodachrome: p.kodachrome,
+        };
+        flushSlotFilterPreview(fid, sid);
+      });
 
-          // Swap the underlying image element in-place
-          targetObj._element         = newImg._element;
-          targetObj._originalElement = newImg._originalElement;
-          targetObj.width            = newImg.width;
-          targetObj.height           = newImg.height;
+      // Sync sliders to reflect what was applied on the active slot
+      syncColorPanel(frameId, slotIndex);
+      pushUndo();
+      scheduleAutosave();
 
-          targetObj.set(snap);
-
-          const state = ArtboardMap[fid];
-          const slot  = state?.config.slots.find(s => s.index === sid);
-          normalizeSlotImageObject(state, slot, targetObj);
-          applyFiltersToSlot(fid, sid);
-          targetObj.setCoords();
-        });
-
-        canvas.renderAll();
-        pushUndo();
-        scheduleAutosave();
-        const n = allSwaps.length;
-        notify(
-          n > 1
-            ? `Auto color applied to ${n} frames ✓`
-            : "Auto color applied — position unchanged ✓",
-          "success"
-        );
-      }, { crossOrigin: "anonymous" });
+      const n = allTargets.length;
+      notify(
+        n > 1
+          ? `Auto color applied to ${n} slots — sliders updated ✓`
+          : "Auto color applied — adjust sliders to fine-tune ✓",
+        "success"
+      );
     } else {
       notify("Auto color failed: " + r.error, "error");
     }
