@@ -324,7 +324,12 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
   display: flex; align-items: center; gap: 7px; padding: 4px 0;
 }
 .filter-row label { font-size: 10px; color: var(--editor-muted); min-width: 62px; flex-shrink: 0; }
-.filter-row input[type="range"] { flex: 1; height: 3px; accent-color: var(--editor-accent); cursor: pointer; }
+.filter-row input[type="range"] { flex: 1; height: 3px; accent-color: var(--editor-accent); cursor: pointer; outline: none; border-radius: 4px; }
+.filter-row input[type="range"]:focus {
+  outline: 2px solid var(--editor-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
 .fval { font-size: 10px; color: var(--editor-accent); min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
 .filter-group-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--editor-muted); margin: 8px 0 3px; }
 .gamma-r label { color: #FF8880; }

@@ -208,6 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindBlendControls();
   bindTransformControls();
   bindTextControls();
+  bindSliderKeyboard();
   bindSettingsIO();
   bindShortcutsModal();
   bindTour();
@@ -1865,6 +1866,49 @@ function addText(text, overrides = {}) {
     canvas.setActiveObject(itext);
     canvas.renderAll();
     pushUndo(); scheduleAutosave();
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// COLOR SLIDER KEYBOARD CONTROL
+// ─────────────────────────────────────────────────────────────────
+function bindSliderKeyboard() {
+  const SLIDERS = [
+    "fBrightness","fContrast","fSaturation","fHue",
+    "fBlur","fNoise","fGammaR","fGammaG","fGammaB","fOpacity",
+  ];
+
+  SLIDERS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    el.addEventListener("keydown", e => {
+      const isUp   = e.key === "ArrowUp"   || e.key === "ArrowRight";
+      const isDown = e.key === "ArrowDown" || e.key === "ArrowLeft";
+      if (!isUp && !isDown) return;
+
+      // Prevent canvas nudge / page scroll
+      e.preventDefault();
+      e.stopPropagation();
+
+      const step = e.shiftKey ? 5 : 1;
+      const min  = parseFloat(el.min);
+      const max  = parseFloat(el.max);
+      const next = Math.max(min, Math.min(max, parseFloat(el.value) + (isUp ? step : -step)));
+      el.value   = next;
+
+      // Fire both events: input → live preview, change → commit + push undo
+      el.dispatchEvent(new Event("input",  { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // Double-click resets slider to its default (zero / 100 for gamma)
+    el.addEventListener("dblclick", () => {
+      const def = (id.startsWith("fGamma") || id === "fOpacity") ? "100" : "0";
+      el.value  = def;
+      el.dispatchEvent(new Event("input",  { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
   });
 }
 
@@ -3705,6 +3749,10 @@ const SHORTCUT_DEFS = [
   { id:"panHScroll",      cat:"Canvas", label:"Pan horizontally",        def:"Shift + Scroll",   noRemap: true },
   { id:"rotateHandle",    cat:"Canvas", label:"Rotate photo",            def:"Drag ↻ corner",    noRemap: true },
   { id:"scrollbars",      cat:"Canvas", label:"Scroll via scrollbars",   def:"Drag H / V bar",   noRemap: true },
+  // Color Adjustment sliders — non-remappable keyboard controls
+  { id:"sliderFine",      cat:"Color",  label:"Slider fine tune (±1)",   def:"← / → or ↑ / ↓",  noRemap: true },
+  { id:"sliderCoarse",    cat:"Color",  label:"Slider coarse tune (±5)", def:"Shift + ← / →",    noRemap: true },
+  { id:"sliderReset",     cat:"Color",  label:"Reset single slider",     def:"Dbl-click slider",  noRemap: true },
   { id:"showShortcuts",   cat:"Help",   label:"Keyboard Shortcuts",      def:"ctrl+/"            },
   { id:"startTour",       cat:"Help",   label:"Start Guided Tour",       def:"ctrl+shift+h"      },
 ];
