@@ -666,7 +666,7 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
     state.slotImages[slotIndex] = img;
 
     applyFiltersToSlot(frameId, slotIndex);
-    canvas.setActiveObject(img);
+    canvas.discardActiveObject();
     canvas.renderAll();
     refreshLayersPanel();
     updateSlotPanelThumb(frameId, slotIndex, imageUrl);
