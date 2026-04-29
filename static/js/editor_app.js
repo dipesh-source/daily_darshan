@@ -62,6 +62,9 @@ const _3IN1_TEXT = [
   { key:"darshan_title", x:1669, y:95,   originX:"center", fontSize:55, bold:true,  color:"#FFFFFF" },
   { key:"date",          x:1094, y:1958, originX:"center", fontSize:42, bold:false, color:"#FFFFFF" },
 ];
+const _M2S_TEXT = [
+  { key:"date", x:2800, y:434, originX:"center", fontSize:52, bold:true, color:"#8B0000" },
+];
 const AUTO_TEXT_LAYOUT = {
   full:   _PORTRAIT_TEXT,
   left:   _PORTRAIT_TEXT,
@@ -70,6 +73,7 @@ const AUTO_TEXT_LAYOUT = {
   wide:   _WIDE_TEXT,
   "3in1_l": _3IN1_TEXT,
   "3in1_r": _3IN1_TEXT,
+  m2s:    _M2S_TEXT,
 };
 
 function sessionDateDisplay() {
@@ -138,7 +142,7 @@ function addAutoTextToArtboard(state) {
       fontFamily:  "Arial",
       fontWeight:  def.bold ? "bold" : "normal",
       fill:        def.color,
-      shadow:      new fabric.Shadow({ color:"rgba(0,0,0,0.75)", blur:6, offsetX:1, offsetY:2 }),
+      shadow:      null,
       selectable:  false,
       evented:     true,   // consumes clicks so photos below are not accidentally moved
       hoverCursor: "not-allowed",
