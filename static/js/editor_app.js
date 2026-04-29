@@ -209,6 +209,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindTransformControls();
   bindTextControls();
   bindSliderKeyboard();
+  bindAltDragCopy();
   bindSettingsIO();
   bindShortcutsModal();
   bindTour();
@@ -312,6 +313,8 @@ function initCanvas() {
   canvas.on("selection:updated", onSelectionChange);
   canvas.on("selection:cleared", onSelectionCleared);
   canvas.on("object:modified",   e => {
+    // Suppress undo/save when the position-reset from an alt-copy drag fires this
+    if (_altCopyInProgress) { _altCopyInProgress = false; return; }
     const slotBinding = getSlotForImageObject(e.target);
     if (slotBinding) {
       e.target.data = { ...(e.target.data || {}), manualCrop: true };
@@ -2453,6 +2456,114 @@ function bindGuidePanel() {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────
+// ALT + DRAG  →  COPY IMAGE TO ANOTHER SLOT
+// ─────────────────────────────────────────────────────────────────
+let _altDragSource     = null;   // source info while alt-drag is in progress
+let _altDragMoved      = false;  // true once object:moving fires during alt-drag
+let _altCopyInProgress = false;  // suppresses undo from the position-reset commit
+
+function bindAltDragCopy() {
+  // ── Step 1: detect Alt+mousedown on a slot-image ───────────────
+  canvas.on("mouse:down", e => {
+    _altDragSource = null;
+    _altDragMoved  = false;
+    if (!e.e.altKey) return;
+
+    const sb = getSlotForImageObject(e.target);
+    if (!sb) return;
+
+    const obj = e.target;
+    const d   = obj.data;
+    _altDragSource = {
+      frameId:   d.frameId,
+      slotIndex: d.slotIndex,
+      imageUrl:  obj._originalElement?.src || obj._element?.src || "",
+      photoId:   d.photoId,
+      fileName:  d.fileName || "",
+      origLeft:  obj.left,
+      origTop:   obj.top,
+      filters:   { ...(ArtboardMap[d.frameId]?.slotFilters?.[d.slotIndex] || {}) },
+    };
+
+    // Show copy cursor so the user knows it's a copy, not a move
+    obj.set({ moveCursor: "copy", hoverCursor: "copy" });
+  });
+
+  // ── Step 2: flag that movement actually happened ───────────────
+  canvas.on("object:moving", e => {
+    if (_altDragSource && getSlotForImageObject(e.target)) _altDragMoved = true;
+  });
+
+  // ── Step 3: on mouse-up, perform the copy and restore original ─
+  canvas.on("mouse:up", () => {
+    if (!_altDragSource) return;
+    const src   = _altDragSource;
+    const moved = _altDragMoved;
+    _altDragSource = null;
+    _altDragMoved  = false;
+
+    const obj = canvas.getActiveObject();
+
+    // Restore normal cursor regardless
+    if (obj) obj.set({ moveCursor: "move", hoverCursor: "move" });
+
+    // No actual drag happened — just a plain Alt+click, do nothing
+    if (!moved || !obj) return;
+
+    // Confirm it's the same slot-image we started on
+    if (obj.data?.frameId !== src.frameId || obj.data?.slotIndex !== src.slotIndex) return;
+
+    // Where did the user drop it?
+    const cp         = obj.getCenterPoint();
+    const dropTarget = _findSlotAtCanvasPoint(cp.x, cp.y);
+
+    // Reset the original image back to its slot (copy, don't move)
+    _altCopyInProgress = true;
+    obj.set({ left: src.origLeft, top: src.origTop });
+    obj.setCoords();
+    canvas.renderAll();
+
+    // Dropped nowhere useful, or on the same slot
+    if (!dropTarget ||
+        (dropTarget.frameId === src.frameId && dropTarget.slotIndex === src.slotIndex)) {
+      _altCopyInProgress = false;
+      if (!dropTarget) notify("Drop on a photo slot to copy the image there", "info");
+      return;
+    }
+
+    // Pre-set filters on the target so they apply as soon as the image loads
+    const tState = ArtboardMap[dropTarget.frameId];
+    if (tState) {
+      tState.slotFilters[dropTarget.slotIndex] = { ...src.filters };
+    }
+
+    loadPhotoIntoSlot(
+      dropTarget.frameId, dropTarget.slotIndex,
+      src.imageUrl, src.photoId, src.fileName,
+    );
+
+    const targetName = ArtboardMap[dropTarget.frameId]?.config?.short_name || "frame";
+    notify(`Photo copied to ${targetName} · Slot ${dropTarget.slotIndex + 1}`, "success");
+  });
+}
+
+// Find which slot across all artboards contains a given canvas-coordinate point
+function _findSlotAtCanvasPoint(cx, cy) {
+  for (const state of Object.values(ArtboardMap)) {
+    for (const slot of (state.config.slots || [])) {
+      const sx = state.ox + slot.x * state.scale;
+      const sy = state.oy + slot.y * state.scale;
+      const sw = slot.w * state.scale;
+      const sh = slot.h * state.scale;
+      if (cx >= sx && cx <= sx + sw && cy >= sy && cy <= sy + sh) {
+        return { frameId: state.frameId, slotIndex: slot.index };
+      }
+    }
+  }
+  return null;
+}
+
 // ── object:moving ──────────────────────────────────────────────
 function _onObjectMoving(e) {
   var obj = e.target;
@@ -3720,6 +3831,7 @@ const SHORTCUT_DEFS = [
   { id:"undo",            cat:"Edit",   label:"Undo",                    def:"ctrl+z"            },
   { id:"redo",            cat:"Edit",   label:"Redo",                    def:"ctrl+y"            },
   { id:"deleteSelected",  cat:"Edit",   label:"Delete Selected",         def:"delete"            },
+  { id:"altDragCopy",     cat:"Edit",   label:"Copy image to another slot", def:"Alt + Drag photo", noRemap: true },
   { id:"rotateCCW",       cat:"Edit",   label:"Rotate Left 15°",         def:"["                 },
   { id:"rotateCW",        cat:"Edit",   label:"Rotate Right 15°",        def:"]"                 },
   { id:"nudgeLeft",       cat:"Edit",   label:"Nudge Left 1px",          def:"arrowleft"         },
