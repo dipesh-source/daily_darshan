@@ -2749,51 +2749,91 @@ function redo() {
   restoreAll(snap);
 }
 function serializeAll() {
-  // Snapshot per-artboard canvas objects
   const snap = {};
   Object.values(ArtboardMap).forEach(ab => {
     const objs = canvas.getObjects().filter(o => {
       const d = o.data || {};
       return d.frameId === ab.frameId && d.type !== "artboard-bg" && d.type !== "frame-overlay";
     });
-    snap[ab.frameId] = objs.map(o => o.toObject(["data", "clipPath"]));
+    // Include slotFilters so color corrections are part of the undo snapshot
+    const filters = {};
+    Object.entries(ab.slotFilters || {}).forEach(([k, f]) => { filters[k] = { ...f }; });
+    snap[ab.frameId] = {
+      objects:     objs.map(o => o.toObject(["data", "clipPath"])),
+      slotFilters: filters,
+    };
   });
   return JSON.stringify(snap);
 }
+
 function restoreAll(snapStr) {
   const snap = JSON.parse(snapStr);
-  // Remove all non-bg, non-overlay objects first (overlays are always reloaded from server)
+  const entries = Object.entries(snap);
+
+  // Nothing to restore edge-case
+  if (entries.length === 0) {
+    refreshLayersPanel();
+    renderSlotsPanel(activeFrameId);
+    return;
+  }
+
+  // ── Pre-load ALL frames in parallel while the current canvas stays visible ──
+  // Only clear + swap after every frame has finished loading so there is no
+  // blank-canvas flicker between "removed old" and "added new".
+  let pending = entries.length;
+  const frameResults = {};   // fid (string) → { loaded: FabricObject[], slotFilters }
+
+  entries.forEach(([fid, frameSnap]) => {
+    // Support old-format snapshots (plain array) and new-format (object with .objects)
+    const objList    = Array.isArray(frameSnap) ? frameSnap : (frameSnap.objects || []);
+    const savedFilters = Array.isArray(frameSnap) ? null    : (frameSnap.slotFilters || null);
+
+    fabric.util.enlivenObjects(objList, loaded => {
+      frameResults[fid] = { loaded, slotFilters: savedFilters };
+      pending--;
+      if (pending === 0) _commitRestore(frameResults);
+    });
+  });
+}
+
+// Called once ALL frames have finished loading — swaps canvas content atomically.
+function _commitRestore(frameResults) {
+  // Remove everything except permanent background and frame overlays
   canvas.getObjects().filter(o => {
     const d = o.data || {};
     return d.type !== "artboard-bg" && d.type !== "frame-overlay";
   }).forEach(o => canvas.remove(o));
 
-  // Restore per-artboard
-  Object.entries(snap).forEach(([fid, objs]) => {
+  Object.entries(frameResults).forEach(([fid, { loaded, slotFilters }]) => {
     const state = ArtboardMap[parseInt(fid)];
     if (!state) return;
-    state.slotImages  = {};
-    state.overlayObj  = null;
+    state.slotImages   = {};
+    state.overlayObj   = null;
     state.placeholders = [];
 
-    fabric.util.enlivenObjects(objs, loaded => {
-      loaded.forEach(obj => {
-        const d = obj.data || {};
-        // Frame overlays are never in undo snapshots — skip just in case
-        if (d.type === "frame-overlay") return;
-        canvas.add(obj);
-        if (d.type === "slot-image") {
-          const slot = state.config.slots.find(s => s.index === d.slotIndex);
-          state.slotImages[d.slotIndex] = obj;
-          normalizeSlotImageObject(state, slot, obj);
-        }
-        if (d.type === "slot-placeholder") state.placeholders.push(obj);
-        if (typeof d.locked === "boolean") applyLayerLock(obj);
-      });
-      addAutoTextToArtboard(state);
-      canvas.renderAll();
+    // Restore saved filter params so color panel stays in sync
+    if (slotFilters) {
+      Object.entries(slotFilters).forEach(([k, f]) => { state.slotFilters[k] = { ...f }; });
+    }
+
+    loaded.forEach(obj => {
+      const d = obj.data || {};
+      if (d.type === "frame-overlay") return;
+      canvas.add(obj);
+      if (d.type === "slot-image") {
+        const slot = state.config.slots.find(s => s.index === d.slotIndex);
+        state.slotImages[d.slotIndex] = obj;
+        normalizeSlotImageObject(state, slot, obj);
+        // Re-apply filter params from state so the canvas object matches
+        applyFiltersToSlot(parseInt(fid), d.slotIndex);
+      }
+      if (d.type === "slot-placeholder") state.placeholders.push(obj);
+      if (typeof d.locked === "boolean") applyLayerLock(obj);
     });
+    addAutoTextToArtboard(state);
   });
+
+  canvas.renderAll();
   refreshLayersPanel();
   renderSlotsPanel(activeFrameId);
 }
