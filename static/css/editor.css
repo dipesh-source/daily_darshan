@@ -936,8 +936,8 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 }
 .qc-card {
   background: #1c1c1c; border: 1px solid #333; border-radius: 12px;
-  width: 460px; max-width: 95vw; max-height: 90vh; overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0,0,0,.75);
+  width: min(460px, 95vw); max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,.75); box-sizing: border-box;
 }
 .qc-header {
   display: flex; align-items: flex-start; justify-content: space-between;
@@ -962,22 +962,32 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 }
 
 /* Format / target option pills */
-.qc-option-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.qc-option-group { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Format group: 3 equal columns, stacks to 1 on very small screens */
+.qc-fmt-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+@media (max-width: 380px) {
+  .qc-fmt-group { grid-template-columns: 1fr; }
+}
 .qc-opt {
   display: flex; align-items: flex-start; gap: 8px; cursor: pointer;
-  padding: 7px 10px; background: rgba(255,255,255,.04);
+  padding: 8px 10px; background: rgba(255,255,255,.04);
   border: 1px solid #333; border-radius: 7px; transition: all .12s;
-  user-select: none; min-width: 80px;
+  user-select: none; box-sizing: border-box; min-width: 0;
 }
 .qc-opt:has(input:checked) { border-color: #00e5ff; background: rgba(0,200,255,.1); }
 .qc-opt input { display: none; }
-.qc-opt-inner { display: flex; flex-direction: column; gap: 2px; }
+.qc-opt-inner { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .qc-opt-inner strong { font-size: 12px; color: var(--editor-text); }
-.qc-opt-inner span   { font-size: 10px; color: var(--editor-muted); }
+.qc-opt-inner span   { font-size: 10px; color: var(--editor-muted); line-height: 1.3; }
 .qc-opt:has(input:checked) .qc-opt-inner strong { color: #00e5ff; }
-/* Simple pill (no inner) */
-.qc-opt > strong, .qc-opt:not(:has(.qc-opt-inner)) {
-  font-size: 11px; color: var(--editor-text); align-items: center;
+/* Simple pill (no inner) — size target buttons */
+.qc-option-group:not(.qc-fmt-group) .qc-opt {
+  flex: 1 1 auto; justify-content: center; align-items: center;
+  font-size: 11px; color: var(--editor-text);
 }
 .qc-opt:has(input:checked):not(:has(.qc-opt-inner)) { color: #00e5ff; }
 
@@ -1029,8 +1039,9 @@ body:has(.editor-shell) .main-content { padding: 0; height: 100vh; overflow: hid
 .qc-footer {
   display: flex; gap: 8px; padding: 14px 18px;
   border-top: 1px solid #2a2a2a; justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: wrap; box-sizing: border-box;
 }
+.qc-footer button { flex-shrink: 0; }
 .qc-test-btn {
   color: #00e5ff !important; border-color: rgba(0,200,255,.3) !important;
 }

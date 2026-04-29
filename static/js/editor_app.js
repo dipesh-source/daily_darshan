@@ -1180,7 +1180,9 @@ function renderSlotsPanel(frameId) {
     row.dataset.slot = slot.index;
 
     const hasImg = !!state.slotImages[slot.index];
-    const thumb  = state.slotImages[slot.index]?._element?.src || "";
+    const thumb  = state.slotImages[slot.index]?._originalElement?.src
+                || state.slotImages[slot.index]?._element?.src
+                || "";
 
     row.innerHTML = `
       <div class="slot-thumb ${hasImg ? "has-image" : ""}" id="slotThumb-${frameId}-${slot.index}">
