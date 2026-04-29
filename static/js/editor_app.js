@@ -123,7 +123,8 @@ function addAutoTextToArtboard(state) {
       const existing = existingByKey[def.key];
       if (!existing.data) existing.data = {};
       existing.data.locked = true;
-      existing.set({ selectable: false, evented: false, hoverCursor: "not-allowed" });
+      // evented:true so clicks don't fall through to photos below; selectable:false prevents dragging
+      existing.set({ selectable: false, evented: true, hoverCursor: "not-allowed" });
       if (canvas.getActiveObject() === existing) canvas.discardActiveObject();
       return;
     }
@@ -139,7 +140,7 @@ function addAutoTextToArtboard(state) {
       fill:        def.color,
       shadow:      new fabric.Shadow({ color:"rgba(0,0,0,0.75)", blur:6, offsetX:1, offsetY:2 }),
       selectable:  false,
-      evented:     false,
+      evented:     true,   // consumes clicks so photos below are not accidentally moved
       hoverCursor: "not-allowed",
       data: { type:"text-overlay", frameId: state.frameId, textKey: def.key, locked: true },
     });
@@ -617,7 +618,7 @@ function getSyncTargets(sourceFrameId, sourceSlotIndex) {
 // ─────────────────────────────────────────────────────────────────
 // LOAD PHOTO INTO SLOT
 // ─────────────────────────────────────────────────────────────────
-function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isSyncCall = false) {
+function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isSyncCall = false, _onDone = null) {
   const state = ArtboardMap[frameId];
   if (!state) return;
 
@@ -659,25 +660,38 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
     applyFiltersToSlot(frameId, slotIndex);
     canvas.setActiveObject(img);
     canvas.renderAll();
-    pushUndo();
-    scheduleAutosave();
     refreshLayersPanel();
     updateSlotPanelThumb(frameId, slotIndex, imageUrl);
 
-    if (!_isSyncCall) {
-      // Mirror to all linked tall-portrait slots in this darshan
-      const targets = getSyncTargets(frameId, slotIndex);
-      targets.forEach(t => {
-        loadPhotoIntoSlot(t.frameId, t.slotIndex, imageUrl, photoId, fileName, true);
-      });
-      const syncCount = targets.length;
-      notify(
-        syncCount > 0
-          ? `Photo synced to ${syncCount + 1} frames (${state.config.short_name} + ${syncCount} others)`
-          : `Photo loaded into ${state.config.short_name} Slot ${slotIndex + 1}`,
-        "success"
-      );
+    if (_isSyncCall) {
+      // Sync call — signal completion so primary can push one shared undo
+      _onDone?.();
+      return;
     }
+
+    // Primary call — wait for all synced frames to finish loading before pushing undo
+    const targets = getSyncTargets(frameId, slotIndex);
+    if (targets.length === 0) {
+      pushUndo();
+      scheduleAutosave();
+    } else {
+      let remaining = targets.length;
+      const onSyncDone = () => {
+        remaining--;
+        if (remaining === 0) { pushUndo(); scheduleAutosave(); }
+      };
+      targets.forEach(t => {
+        loadPhotoIntoSlot(t.frameId, t.slotIndex, imageUrl, photoId, fileName, true, onSyncDone);
+      });
+    }
+
+    const syncCount = targets.length;
+    notify(
+      syncCount > 0
+        ? `Photo synced to ${syncCount + 1} frames (${state.config.short_name} + ${syncCount} others)`
+        : `Photo loaded into ${state.config.short_name} Slot ${slotIndex + 1}`,
+      "success"
+    );
   }, { crossOrigin: "anonymous" });
 }
 
@@ -1276,7 +1290,7 @@ async function uploadPhoto(frameId, slotIndex, file) {
   }
 }
 
-function clearSlot(frameId, slotIndex) {
+function clearSlot(frameId, slotIndex, _isSyncCall = false) {
   const state = ArtboardMap[frameId];
   if (!state) return;
   const img = state.slotImages[slotIndex];
@@ -1284,7 +1298,14 @@ function clearSlot(frameId, slotIndex) {
   state.slotFilters[slotIndex] = defaultFilters();
   restorePlaceholderForSlot(state, slotIndex);
   renderSlotsPanel(frameId);
-  pushUndo(); scheduleAutosave();
+
+  if (!_isSyncCall) {
+    // Also clear all synced slots atomically
+    getSyncTargets(frameId, slotIndex).forEach(t => clearSlot(t.frameId, t.slotIndex, true));
+    pushUndo();
+    scheduleAutosave();
+    refreshLayersPanel();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1465,13 +1486,19 @@ function renderActiveFrameInfo(frameId) {
 // Only acts on objects that explicitly carry a boolean locked flag.
 function applyLayerLock(obj) {
   if (!obj || obj.data?.locked === undefined) return;
-  const locked = !!obj.data.locked;
+  const locked   = !!obj.data.locked;
+  const isText   = obj.data?.type === "text-overlay";
   obj.set({
     selectable:  !locked,
-    evented:     !locked,
+    // Text overlays stay evented:true even when locked so clicks on them don't
+    // fall through to photos underneath. Other objects (photos) use evented:false
+    // when locked so they are fully invisible to canvas interaction.
+    evented:     isText ? true : !locked,
     hoverCursor: locked ? "not-allowed" : null,
   });
   if (locked && canvas.getActiveObject() === obj) canvas.discardActiveObject();
+  // When a text layer is unlocked, ensure it's on top so it's hit-testable before photos
+  if (!locked && isText) canvas.bringToFront(obj);
 }
 
 function toggleLayerLock(obj) {
