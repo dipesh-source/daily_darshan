@@ -3478,39 +3478,22 @@ async function _runQCExport(toExport) {
     lastRow.style.display = "";
   }
 
-  // ── Step 3: download ─────────────────────────────────────────
-  // Single file → direct download.
-  // Multiple files → bundle into a .zip using JSZip (no user-gesture
-  // timing issues, works offline, no browser permission dialogs).
+  // ── Step 3: download each file individually ──────────────────
   try {
-    if (blobs.length === 1) {
-      msg.textContent = `Downloading ${blobs[0].name}…`;
-      _downloadBlob(blobs[0].blob, blobs[0].filename);
-      await new Promise(r => setTimeout(r, 200));
-      overlay.style.display = "none";
-      notify(`✓ Exported — ${dispSize}`, "success");
-    } else {
-      // Build zip
-      const zip = new JSZip();
-      for (let i = 0; i < blobs.length; i++) {
-        const { blob, filename, name } = blobs[i];
-        msg.textContent = `Adding to zip ${i + 1} / ${blobs.length}: ${name}…`;
-        await new Promise(r => setTimeout(r, 20));
-        zip.file(filename, blob);
-      }
-      msg.textContent = "Generating zip archive…";
-      const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
-
-      // Build a meaningful zip name: darshan_type + date
-      const sess    = window.SESSION || {};
-      const zipDate = (sess.darshan_date || new Date().toISOString().slice(0,10)).replace(/-/g, "");
-      const zipType = sess.darshan_type || "darshan";
-      const zipName = `${zipType}_${zipDate}.zip`;
-
-      _downloadBlob(zipBlob, zipName);
-      overlay.style.display = "none";
-      notify(`✓ Exported ${blobs.length} frames as ${zipName} — ${dispSize} total`, "success");
+    for (let i = 0; i < blobs.length; i++) {
+      const { blob, filename, name } = blobs[i];
+      msg.textContent = `Downloading ${i + 1} / ${blobs.length}: ${name}…`;
+      _downloadBlob(blob, filename);
+      // Small gap between downloads so the browser doesn't block them
+      await new Promise(r => setTimeout(r, 300));
     }
+    overlay.style.display = "none";
+    notify(
+      blobs.length === 1
+        ? `✓ Exported — ${dispSize}`
+        : `✓ Exported ${blobs.length} files — ${dispSize} total`,
+      "success"
+    );
   } catch (err) {
     notify("Export failed: " + err.message, "error");
     overlay.style.display = "none";
