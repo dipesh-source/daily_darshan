@@ -133,7 +133,7 @@ a = Analysis(
         "scipy", "skimage",     # not used at runtime
     ],
     noarchive     = False,
-    optimize      = 0,
+    optimize      = 2,   # strip docstrings + asserts → smaller .pyc files
 )
 
 pyz = PYZ(a.pure)
