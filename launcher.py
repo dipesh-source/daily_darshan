@@ -110,6 +110,27 @@ def _maybe_populate_frames(db_path):
         execute_from_command_line(["manage.py", "populate_frames"])
 
 
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "darshan@123"
+ADMIN_EMAIL    = "admin@dailydarshan.local"
+
+
+def _ensure_superuser():
+    """Create the default admin superuser if no superuser exists yet."""
+    try:
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        if not User.objects.filter(is_superuser=True).exists():
+            User.objects.create_superuser(
+                username=ADMIN_USERNAME,
+                password=ADMIN_PASSWORD,
+                email=ADMIN_EMAIL,
+            )
+            print(f"[launcher] Admin user created — username: {ADMIN_USERNAME}  password: {ADMIN_PASSWORD}")
+    except Exception as e:
+        print(f"[launcher] Could not create admin user: {e}")
+
+
 def _run_migrations():
     """
     Run Django migrations safely, then seed frames only when needed.
@@ -156,6 +177,10 @@ def _run_migrations():
     # Only seed frames when the count doesn't match — avoids 16 DB writes
     # on every subsequent launch (saves ~2-3 s of startup time).
     _maybe_populate_frames(db_path)
+
+    # Ensure a Django admin superuser exists so the admin panel is always
+    # accessible in the bundled app (no manage.py createsuperuser needed).
+    _ensure_superuser()
 
 
 def run_django(port):
