@@ -23,13 +23,20 @@ const LABEL_HEIGHT   = 36;    // px above artboard for the name label
 const SLOT_IMAGE_BLEED_RATIO = 0.025;
 const SLOT_IMAGE_BLEED_MIN   = 10;
 const SLOT_IMAGE_BLEED_MAX   = 20;
-const FILTER_PREVIEW_DELAY = 32;
+const FILTER_PREVIEW_DELAY = 120;  // ms — debounce while dragging slider
 
 function configureStableFilterBackend() {
   if (typeof fabric === "undefined") return;
-  fabric.enableGLFiltering = false;
-  if (fabric.Canvas2dFilterBackend) {
-    fabric.filterBackend = new fabric.Canvas2dFilterBackend();
+  // Use WebGL when available (GPU processes all pixels in parallel — much faster).
+  // Fall back to Canvas2d only if WebGL is unavailable.
+  if (fabric.isWebglSupported && fabric.isWebglSupported()) {
+    fabric.enableGLFiltering = true;
+    fabric.textureSize = 4096;
+  } else {
+    fabric.enableGLFiltering = false;
+    if (fabric.Canvas2dFilterBackend) {
+      fabric.filterBackend = new fabric.Canvas2dFilterBackend();
+    }
   }
 }
 
@@ -626,6 +633,30 @@ function getSyncTargets(sourceFrameId, sourceSlotIndex) {
 // ─────────────────────────────────────────────────────────────────
 // LOAD PHOTO INTO SLOT
 // ─────────────────────────────────────────────────────────────────
+
+// Downscale a data/blob URL to a max dimension for canvas preview.
+// Returns a Promise<string> with the (possibly downscaled) URL.
+// The original full-res URL is preserved on the img element via data-original-src
+// for use during high-res export.
+const CANVAS_MAX_PX = 1600;  // max side length for in-canvas preview image
+function _downscaleImageUrl(url) {
+  return new Promise(resolve => {
+    const tmp = new Image();
+    tmp.onload = () => {
+      const w = tmp.naturalWidth, h = tmp.naturalHeight;
+      if (w <= CANVAS_MAX_PX && h <= CANVAS_MAX_PX) { resolve(url); return; }
+      const ratio  = Math.min(CANVAS_MAX_PX / w, CANVAS_MAX_PX / h);
+      const dw = Math.round(w * ratio), dh = Math.round(h * ratio);
+      const c  = document.createElement("canvas");
+      c.width = dw; c.height = dh;
+      c.getContext("2d").drawImage(tmp, 0, 0, dw, dh);
+      resolve(c.toDataURL("image/jpeg", 0.92));
+    };
+    tmp.onerror = () => resolve(url);
+    tmp.src = url;
+  });
+}
+
 function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isSyncCall = false, _onDone = null) {
   const state = ArtboardMap[frameId];
   if (!state) return;
@@ -637,7 +668,10 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
   const sw = slot.w * s;
   const sh = slot.h * s;
 
-  fabric.Image.fromURL(imageUrl, img => {
+  _downscaleImageUrl(imageUrl).then(previewUrl => {
+  fabric.Image.fromURL(previewUrl, img => {
+    // Keep original full-res URL accessible for export
+    img._originalSrc = imageUrl;
     const { w: natW, h: natH } = imgNaturalDims(img);
     const fitScale = getRequiredSlotImageScale(sw, sh, natW, natH);
 
@@ -701,6 +735,7 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
       "success"
     );
   }, { crossOrigin: "anonymous" });
+  }); // end _downscaleImageUrl.then
 }
 
 function makeSlotClip(state, slot) {
@@ -1904,8 +1939,16 @@ function bindSliderKeyboard() {
       const next = Math.max(min, Math.min(max, parseFloat(el.value) + (isUp ? step : -step)));
       el.value   = next;
 
-      // Fire both events: input → live preview, change → commit + push undo
-      el.dispatchEvent(new Event("input",  { bubbles: true }));
+      // Only queue a debounced preview while key is held — never flush synchronously
+      // on every keydown (that would block the UI). Commit happens on keyup.
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    el.addEventListener("keyup", e => {
+      const isArrow = ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key);
+      if (!isArrow) return;
+      e.stopPropagation();
+      // Commit the final value after the user stops pressing the key
       el.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
