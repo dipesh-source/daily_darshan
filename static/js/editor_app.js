@@ -507,6 +507,13 @@ function loadArtboardFromJSON(state, savedJSON) {
     obj.setCoords();
   }
 
+  // Restore saved colour-correction filters before re-enliving objects
+  if (savedJSON.slotFilters) {
+    for (const [si, f] of Object.entries(savedJSON.slotFilters)) {
+      state.slotFilters[parseInt(si, 10)] = { ...defaultFilters(), ...f };
+    }
+  }
+
   const objs = savedJSON.objects || [];
   fabric.util.enlivenObjects(objs, loaded => {
     loaded.forEach(obj => {
@@ -519,6 +526,8 @@ function loadArtboardFromJSON(state, savedJSON) {
         state.slotImages[d.slotIndex] = obj;
         const slot = state.config.slots.find(s => s.index === d.slotIndex);
         normalizeSlotImageObject(state, slot, obj);
+        // Re-apply any saved colour corrections for this slot
+        applyFiltersToSlot(state.frameId, d.slotIndex);
       }
       // Re-apply lock state for any object that carries a locked flag
       if (typeof d.locked === "boolean") applyLayerLock(obj);
@@ -633,30 +642,6 @@ function getSyncTargets(sourceFrameId, sourceSlotIndex) {
 // ─────────────────────────────────────────────────────────────────
 // LOAD PHOTO INTO SLOT
 // ─────────────────────────────────────────────────────────────────
-
-// Downscale a data/blob URL to a max dimension for canvas preview.
-// Returns a Promise<string> with the (possibly downscaled) URL.
-// The original full-res URL is preserved on the img element via data-original-src
-// for use during high-res export.
-const CANVAS_MAX_PX = 1600;  // max side length for in-canvas preview image
-function _downscaleImageUrl(url) {
-  return new Promise(resolve => {
-    const tmp = new Image();
-    tmp.onload = () => {
-      const w = tmp.naturalWidth, h = tmp.naturalHeight;
-      if (w <= CANVAS_MAX_PX && h <= CANVAS_MAX_PX) { resolve(url); return; }
-      const ratio  = Math.min(CANVAS_MAX_PX / w, CANVAS_MAX_PX / h);
-      const dw = Math.round(w * ratio), dh = Math.round(h * ratio);
-      const c  = document.createElement("canvas");
-      c.width = dw; c.height = dh;
-      c.getContext("2d").drawImage(tmp, 0, 0, dw, dh);
-      resolve(c.toDataURL("image/jpeg", 0.92));
-    };
-    tmp.onerror = () => resolve(url);
-    tmp.src = url;
-  });
-}
-
 function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isSyncCall = false, _onDone = null) {
   const state = ArtboardMap[frameId];
   if (!state) return;
@@ -668,10 +653,7 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
   const sw = slot.w * s;
   const sh = slot.h * s;
 
-  _downscaleImageUrl(imageUrl).then(previewUrl => {
-  fabric.Image.fromURL(previewUrl, img => {
-    // Keep original full-res URL accessible for export
-    img._originalSrc = imageUrl;
+  fabric.Image.fromURL(imageUrl, img => {
     const { w: natW, h: natH } = imgNaturalDims(img);
     const fitScale = getRequiredSlotImageScale(sw, sh, natW, natH);
 
@@ -735,7 +717,6 @@ function loadPhotoIntoSlot(frameId, slotIndex, imageUrl, photoId, fileName, _isS
       "success"
     );
   }, { crossOrigin: "anonymous" });
-  }); // end _downscaleImageUrl.then
 }
 
 function makeSlotClip(state, slot) {
@@ -3053,10 +3034,11 @@ async function saveSession() {
       return d.frameId === ab.frameId && d.type !== "artboard-bg" && d.type !== "slot-placeholder" && d.type !== "slot-label" && d.type !== "frame-overlay";
     });
     artboards[ab.frameId] = {
-      objects: objs.map(o => o.toObject(["data", "clipPath"])),
+      objects:       objs.map(o => o.toObject(["data", "clipPath"])),
+      slotFilters:   ab.slotFilters || {},
       display_scale: ab.scale,
-      display_ox: ab.ox,
-      display_oy: ab.oy,
+      display_ox:    ab.ox,
+      display_oy:    ab.oy,
     };
   });
 

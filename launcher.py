@@ -142,8 +142,14 @@ def _run_migrations():
 
     try:
         execute_from_command_line(["manage.py", "migrate", "--run-syncdb"])
-    except Exception:
-        # Any other migration failure (e.g. half-applied state) — wipe & retry
+    except Exception as _migrate_err:
+        # Back up the DB before touching it — never silently destroy user data.
+        import shutil as _shutil
+        backup = db_path.with_suffix(".bak.sqlite3")
+        if db_path.exists():
+            _shutil.copy2(str(db_path), str(backup))
+            print(f"[launcher] Migration failed ({_migrate_err}). "
+                  f"DB backed up to {backup}. Resetting and retrying.")
         db_path.unlink(missing_ok=True)
         execute_from_command_line(["manage.py", "migrate", "--run-syncdb"])
 
